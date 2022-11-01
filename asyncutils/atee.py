@@ -65,3 +65,49 @@ def tee_async_iterable(source: AsyncIterable[T], n_clones: int) -> tuple[AsyncIt
 
 
 atee = tee_async_iterable
+
+
+class ClonableAsyncIterableWrapper(AsyncIterable[T], wrapt.ObjectProxy):  # noqa
+    def __init__(self, source: AsyncIterable[T]):
+        super().__init__(source)
+        self._self_source, self._self_clone = tee_async_iterable(source, 2)
+
+    def aclone(self) -> AsyncIterator[T]:
+        """Create a clone of this async iterable.
+
+        Returns:
+            An async iterator, each receiving the same items from the source iterable.
+        """
+        self._self_clone, clone = tee_async_iterable(self._self_clone, 2)
+        return clone
+
+    def __aiter__(self) -> AsyncIterator[T]:
+        return self._self_source.__aiter__()
+
+    async def __anext__(self) -> T:
+        return await self._self_source.__anext__()
+
+
+if __name__ == "__main__":
+    import asyncio
+    import random
+    from asyncutils.amerge import amerge
+
+    async def main() -> None:
+        async def source() -> AsyncIterator[int]:
+            for i in range(10):
+                await asyncio.sleep(random.random() / 10)
+                yield random.randint(0, 100)
+
+        a, b = tee_async_iterable(source(), 2)
+        async for i in amerge(a, b):
+            print(i)
+
+        it = ClonableAsyncIterableWrapper(source())
+        a = it.aclone()
+        b = it.aclone()
+
+        async for i in amerge(a, b, it):
+            print(i)
+
+    asyncio.run(main())
