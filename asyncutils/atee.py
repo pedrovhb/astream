@@ -4,6 +4,8 @@ import asyncio
 from asyncio import Future
 from typing import TypeAlias, AsyncIterator, AsyncIterable, TypeVar
 
+import wrapt
+
 T = TypeVar("T")
 
 ItemAndNextFuture: TypeAlias = Future[tuple[T, "ItemAndNextFuture[T]"]]
