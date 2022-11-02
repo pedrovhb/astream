@@ -83,12 +83,7 @@ clone_2 = clone_1.aclone()
 
 ## CloseableQueue
 
-Standard `asyncio` queues are great for managing data flow, but there's a bit of a mismatch when combining them with async iterators - queues always live forever, and iterators don't necessarily. Standard queues can be joined, but that only ensures that they're empty at some moment in time, and not that new items won't be subsequently added. `asyncutils` provides closeable queue types which help building finite pipelines with backpressure:
-
-```python
-queue = CloseableQueue(maxsize=5)
-# ... Todo - example
-```
+Standard `asyncio` queues are great for managing data flow, but there's a bit of a mismatch when combining them with async iterators - queues always live forever, and iterators don't necessarily. Standard queues can be joined, but that only ensures that they're empty at some moment in time, and not that new items won't be subsequently added. `asyncutils` provides closeable queue types which help building finite pipelines with backpressure.
 
 A CloseableQueue accepts items via `put` and `put_nowait` and provides items via `get` and `get_nowait`, same as the standard library queues.
 When the queue is closed by calling its `close` method, it will no longer accept new items (attempting to do so will raise `QueueClosed`), but will continue to provide items until it's empty. Once it's empty, it will raise `QueueExhausted` on `get` and `get_nowait` calls. It's possible to check whether a queue is closed or exhausted with `queue.is_closed` and `queue.is_exhausted`, and to asynchronously wait until a queue is closed with `await queue.wait_closed()` and `await queue.wait_exhausted()`.
@@ -108,25 +103,6 @@ async for item in queue:
     print(item)  # 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
 ```
 
-
-```python
-# Type annotations optional, but recommended
-queue: CloseableQueue[int] = CloseableQueue()
-# ...
-async def producer(q):
-    async for i in arange(10):
-		await q.put(i)
-	q.close()
-
-# Create
-asyncio.create_task(producer(queue))
-async for item in q2a(queue):
-    print(item)
-    # 0, 1, 2, ...
-
-print("Done!")
-# With a standard Queue, this iteration would never end
-```
 
 `asyncutils` also provides closeable versions of the other standard library queues - namely, `CloseablePriorityQueue` and `CloseableLifoQueue`.
 
