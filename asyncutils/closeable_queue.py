@@ -38,37 +38,34 @@ class CloseableQueue(AsyncioQueue[T], CloseableQueueLike[T, T]):
     or `get_nowait` on an exhausted queue will raise `QueueExhausted`.
     """
 
+    _putters: list[asyncio.Future[None]]
+    _getters: list[asyncio.Future[None]]
+    _finished: asyncio.Event
+
     def __init__(self, maxsize: int = 0) -> None:
         super().__init__(maxsize)
-        self._closed_future = asyncio.Future[None]()
-        self._exhausted_future = asyncio.Future[None]()
+        self._closed = asyncio.Event()
+        self._exhausted = asyncio.Event()
 
     async def put(self, item: T) -> None:
         """Put an item into the queue.
 
         Raises:
             QueueClosed: If the queue is closed.
-
-        Returns:
-            None
         """
         if self.is_closed:
             raise QueueClosed()
-
         return await super().put(item)
 
     def put_nowait(self, item: T) -> None:
         """Put an item into the queue without blocking.
 
         Raises:
+            QueueFull: If the queue is full.
             QueueClosed: If the queue is closed.
-
-        Returns:
-            None
         """
         if self.is_closed:
             raise QueueClosed()
-
         return super().put_nowait(item)
 
     async def get(self) -> T:
@@ -83,69 +80,54 @@ class CloseableQueue(AsyncioQueue[T], CloseableQueueLike[T, T]):
 
         if self.is_exhausted:
             raise QueueExhausted()
-
-        get_task = asyncio.create_task(super().get())
-        closed_task = asyncio.create_task(self.wait_closed())
-        done, pending = await asyncio.wait(
-            (get_task, closed_task), return_when=asyncio.FIRST_COMPLETED
-        )
-        try:
-            if get_task in done:
-                item = get_task.result()
-                if self.empty() and self.is_closed:
-                    self._set_exhausted()
-                return item
-            else:
-                raise QueueExhausted()
-        finally:
-            for task in pending:
-                task.cancel()
+        return await super().get()
 
     def get_nowait(self) -> T:
         """Remove and return an item from the queue without blocking.
 
         Raises:
+            QueueEmpty: If the queue is empty.
             QueueExhausted: If the queue is closed and empty.
-            QueueEmpty: If the queue is not closed and empty.
 
         Returns:
             The item from the queue.
         """
         if self.is_exhausted:
             raise QueueExhausted()
-        item = super().get_nowait()
-        if self.empty() and self.is_closed:
+        return super().get_nowait()
+
+    def task_done(self) -> None:
+        super(CloseableQueue, self).task_done()
+        if self.is_closed and self._finished.is_set():
             self._set_exhausted()
 
-        return item
-
-    @staticmethod
-    def _set_if_not_done(future: asyncio.Future[None]) -> None:
-        if not future.done():
-            future.set_result(None)
-
     def close(self) -> None:
-        self._set_if_not_done(self._closed_future)
-        if self.empty():
-            self._set_if_not_done(self._exhausted_future)
+        self._closed.set()
+
+        for putter in self._putters:
+            putter.set_exception(QueueClosed())
+
+        if self._finished.is_set():
+            self._set_exhausted()
 
     def _set_exhausted(self) -> None:
-        self._set_if_not_done(self._exhausted_future)
+        self._exhausted.set()
+        for getter in self._getters:
+            getter.set_exception(QueueExhausted())
 
     @property
     def is_closed(self) -> bool:  # type: ignore
-        return self._closed_future.done()
+        return self._closed.is_set()
 
     async def wait_closed(self) -> None:
-        await self._closed_future
+        await self._closed.wait()
 
     @property
     def is_exhausted(self) -> bool:  # type: ignore
-        return self._exhausted_future.done()
+        return self._exhausted.is_set()
 
     async def wait_exhausted(self) -> None:
-        await self._exhausted_future
-        await self.join()
+        await self._exhausted.wait()
 
 
 class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueueLike[T, T]):
