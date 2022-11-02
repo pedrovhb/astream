@@ -4,11 +4,11 @@
 
 The library is currently in a very early stage, and features are as of yet unstable (i.e. subject to API changes) and not extensively tested.
 
-## Features
+# Features
 
-### Async iterator utilites
+## Async iterator utilites
 
-#### `merge_async_iterators`, aka `amerge`
+### `merge_async_iterators`, aka `amerge`
 
 Transforms multiple asynchronous iterators into a single one, yielding items from all of them as they come in.
 
@@ -21,7 +21,7 @@ async for item in amerge(a1, a2, a3):
     print(item)  # 10, 90, 1337, ...
 ```
 
-#### `tee_async_iterators`, aka `atee`
+### `tee_async_iterators`, aka `atee`
 
 Transform an async iterable into multiple async iterators which produce the same items.
 
@@ -40,7 +40,7 @@ Note that *the original async iterator should not be used after teeing*. Doing s
 
 `atee` works well when you know exactly how many async iterators you'll need. If there's a need for on-demand copies, check out `aclone`.
 
-#### `clone_async_iterable`, aka `aclone`
+### `clone_async_iterable`, aka `aclone`
 
 Takes an asynchronous iterable or iterator and returns one with the `aclone()` method:
 (todo - example)
@@ -81,7 +81,7 @@ clone_2 = clone_1.aclone()
 - todo - implement same model for afilter, amap
 	- todo - atransform? more general operation which doesn't necessarily map 1:1 - comprehends amap, a filter, aflatmap, etc.
 
-### CloseableQueue
+## CloseableQueue
 
 Standard `asyncio` queues are great for managing data flow, but there's a bit of a mismatch when combining them with async iterators - queues always live forever, and iterators don't necessarily. Standard queues can be joined, but that only ensures that they're empty at some moment in time, and not that new items won't be subsequently added. `asyncutils` provides closeable queue types which help building finite pipelines with backpressure:
 
@@ -130,9 +130,9 @@ print("Done!")
 
 `asyncutils` also provides closeable versions of the other standard library queues - namely, `CloseablePriorityQueue` and `CloseableLifoQueue`.
 
-## Planned/work in progress features
+# Planned/work in progress features
 
-### ReactiveProperty
+## ReactiveProperty
 
 A descriptor which allows asynchronously iterating over changes, or setting callbacks to be run whenever a change occurs:
 
@@ -144,7 +144,7 @@ It's possible to iterate over a reactive property's changes to specific instance
 
 (Todo - example with ReactiveProperty created off-class and reused in different classes?)
 
-### WorkerPool
+## WorkerPool
 
 Distribution of work across multiple workers, with support for backpressure and cancellation.
 
