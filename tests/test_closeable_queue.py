@@ -153,3 +153,57 @@ async def test_closeable_queue_has_waiters_and_is_closed() -> None:
     await asyncio.wait(grab_ok, return_when=asyncio.ALL_COMPLETED)
     queue.close()
     await asyncio.wait(grabbers)
+
+
+@pytest.mark.asyncio
+async def test_closeable_queue_has_putters_and_is_exhausted() -> None:
+    queue = closeable_queue.CloseableQueue[int](maxsize=2)
+
+    async def putter(put_fut: asyncio.Future[None]) -> None:
+        with pytest.raises(closeable_queue.QueueClosed):
+            put_fut.set_result(None)
+            await queue.put(1)
+
+    put_ok = [asyncio.Future[None]() for _ in range(5)]
+    putters = [asyncio.create_task(putter(pok)) for pok in put_ok]
+
+    await asyncio.wait(put_ok, return_when=asyncio.ALL_COMPLETED)
+    assert queue.qsize() == 2
+
+    queue.close()
+    await asyncio.wait(putters)
+
+
+@pytest.mark.asyncio
+async def test_closeable_queue_async_iter() -> None:
+    queue = closeable_queue.CloseableQueue[int]()
+    await queue.put(1)
+    await queue.put(2)
+    await queue.put(3)
+    queue.close()
+
+    results = []
+    async for item in queue:
+        results.append(item)
+        queue.task_done()
+
+    assert results == [1, 2, 3]
+    assert queue.is_closed
+    assert queue.is_exhausted
+
+
+@pytest.mark.asyncio
+async def test_closeable_queue_async_iter_with_exception() -> None:
+    queue = closeable_queue.CloseableQueue[int](maxsize=5)
+
+    async def fill_queue() -> None:
+        for i in range(10):
+            await queue.put(i)
+        queue.close()
+
+    asyncio.create_task(fill_queue())
+
+    expected = iter(range(10))
+    async for item in queue:
+        # print(item)  # 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+        assert item == next(expected)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterable
 from typing import TypeVar
 from asyncio.queues import (
     Queue as AsyncioQueue,
@@ -21,7 +22,7 @@ class QueueExhausted(Exception):
     ...
 
 
-class CloseableQueue(AsyncioQueue[T], CloseableQueueLike[T, T]):
+class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], CloseableQueueLike[T, T]):
     """A closeable version of the asyncio.Queue class.
 
     This class is a closeable version of the asyncio.Queue class.
@@ -128,6 +129,17 @@ class CloseableQueue(AsyncioQueue[T], CloseableQueueLike[T, T]):
 
     async def wait_exhausted(self) -> None:
         await self._exhausted.wait()
+
+    def __aiter__(self) -> CloseableQueue[T]:
+        return self
+
+    async def __anext__(self) -> T:
+        try:
+            item = await self.get()
+            self.task_done()
+            return item
+        except QueueExhausted:
+            raise StopAsyncIteration
 
 
 class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueueLike[T, T]):
