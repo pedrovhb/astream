@@ -8,7 +8,7 @@ The library is currently in a very early stage, and features are as of yet unsta
 
 ### Async iterator utilites
 
-##### `merge_async_iterators`, aka `amerge`
+#### `merge_async_iterators`, aka `amerge`
 
 Transforms multiple asynchronous iterators into a single one, yielding items from all of them as they come in.
 
@@ -21,7 +21,7 @@ async for item in amerge(a1, a2, a3):
     print(item)  # 10, 90, 1337, ...
 ```
 
-##### `tee_async_iterators`, aka `atee`
+#### `tee_async_iterators`, aka `atee`
 
 Transform an async iterable into multiple async iterators which produce the same items.
 
@@ -40,7 +40,7 @@ Note that *the original async iterator should not be used after teeing*. Doing s
 
 `atee` works well when you know exactly how many async iterators you'll need. If there's a need for on-demand copies, check out `aclone`.
 
-##### `clone_async_iterable`, aka `aclone`
+#### `clone_async_iterable`, aka `aclone`
 
 Takes an asynchronous iterable or iterator and returns one with the `aclone()` method:
 (todo - example)
