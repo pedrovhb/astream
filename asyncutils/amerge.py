@@ -23,38 +23,66 @@ class amerge(Generic[T], AsyncIterable[T]):  # noqa
         "_merged_aiter_instance",
     )
 
-    def __init__(self, *async_iterables: AsyncIterable[T]) -> None:
+    def __init__(self, *async_iterables: AsyncIterable[T], close_when_done: bool = False) -> None:
         self._fut_to_aiter = dict[Future[T], AsyncIterator[T]]()
+        self.close_when_done = close_when_done
+        self._closed = asyncio.Future[None]()
+        self._has_items = asyncio.Event()
+
         for async_iter in async_iterables:
             self.add_async_iter(async_iter)
-        self._merged_aiter_instance = aiter(self._merged_aiter())
+        self._merged_aiter_instance = self._merged_aiter()
+
+    def close(self) -> None:
+        self._closed.set_result(None)
 
     def add_async_iter(self, async_iter: AsyncIterable[T]) -> None:
         async_iterator = aiter(async_iter)
         queue_getter = anext(async_iterator)
         fut = asyncio.ensure_future(queue_getter)
         self._fut_to_aiter[fut] = async_iterator
+        self._has_items.set()
 
     async def _merged_aiter(self) -> AsyncIterator[T]:
-        while self._fut_to_aiter:
-            done, pending = await asyncio.wait(
-                self._fut_to_aiter.keys(),
+
+        crt_task = asyncio.current_task()
+        if crt_task is None:
+            raise RuntimeError()
+        self._closed.add_done_callback(crt_task.cancel)
+
+        while True:
+
+            done_, pending_ = await asyncio.wait(
+                (self._closed, has_items_fut := asyncio.ensure_future(self._has_items.wait())),
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            if has_items_fut not in done_:  # self._close future has resolved; return
+                return
 
-            for done_future in done:
+            while self._fut_to_aiter:
+                done, pending = await asyncio.wait(
+                    self._fut_to_aiter.keys(),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
 
-                if exc := done_future.exception():
-                    if isinstance(exc, StopAsyncIteration):
-                        self._fut_to_aiter.pop(done_future)
-                        continue
-                    else:
-                        raise exc
+                for done_future in done:
 
-                future_aiter = self._fut_to_aiter.pop(done_future)
-                new_future = asyncio.ensure_future(anext(future_aiter))
-                self._fut_to_aiter[new_future] = future_aiter
-                yield done_future.result()
+                    if exc := done_future.exception():
+                        if isinstance(exc, StopAsyncIteration):
+                            self._fut_to_aiter.pop(done_future)
+                            continue
+                        else:
+                            raise exc
+
+                    future_aiter = self._fut_to_aiter.pop(done_future)
+                    new_future = asyncio.ensure_future(anext(future_aiter))
+                    self._fut_to_aiter[new_future] = future_aiter
+                    yield done_future.result()
+
+            if self.close_when_done and not self._has_items.is_set():
+                return
+
+            self._has_items.clear()
 
     def __aiter__(self) -> AsyncIterator[T]:
         return self

@@ -56,3 +56,36 @@ async def arange(start: int, stop: int | None = None, step: int = 1) -> AsyncIte
 
     for i in range(start, stop, step):
         yield i
+
+
+def make_queued(
+    fn: Callable[P, Coroutine[Any, Any, T]],
+    n_workers: int,
+    queue_size: int = 100,
+) -> Callable[P, Coroutine[Any, Any, T]]:
+    # todo - clean this up
+    queue = asyncio.Queue[tuple[tuple[Any, ...], dict[str, Any], Future[T]]](maxsize=queue_size)
+
+    async def worker() -> None:
+        while True:
+            args, kwargs, fut = await queue.get()
+            try:
+                result = await fn(*args, **kwargs)
+                fut.set_result(result)
+            except Exception as e:
+                fut.set_exception(e)
+            finally:
+                queue.task_done()
+
+    workers = [asyncio.create_task(worker()) for _ in range(n_workers)]
+
+    @functools.wraps(fn)
+    async def _wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
+        fut: Future[T] = asyncio.get_running_loop().create_future()
+        await queue.put((args, kwargs, fut))
+        await fut
+        return fut.result()
+
+    _wrapped.workers = workers  # type: ignore
+
+    return _wrapped
