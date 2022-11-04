@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from asyncutils.stream import Stream
-from asyncutils.utils import arange, amerge
+from asyncutils.utils import amerge, arange
 
 
 # Test the CloseableQueue class in isolation

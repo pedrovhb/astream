@@ -11,7 +11,6 @@ coverage = "^6.5.0"
 
 [tool.poetry.dev-dependencies]
 black = "^22.10.0"
-isort = "^5.10.1"
 pytest = "^7.2.0"
 pytest-asyncio = "^0.20.1"
 hypothesis = "^6.56.3"

@@ -3,20 +3,20 @@ from __future__ import annotations
 import asyncio
 import inspect
 from typing import (
-    TypeVar,
-    cast,
     Any,
-    overload,
-    Protocol,
-    Iterator,
-    AsyncIterator,
     AsyncIterable,
+    AsyncIterator,
     Callable,
+    cast,
     Coroutine,
     Iterable,
+    Iterator,
+    overload,
+    Protocol,
+    TypeVar,
 )
 
-from asyncutils.closeable_queue import CloseableQueue
+from asyncutils.closeable_queue import CloseableQueue, QueueExhausted
 
 _NextT = TypeVar("_NextT")
 _T = TypeVar("_T")
@@ -40,6 +40,10 @@ async def _flatten(iterable: AsyncIterable[Iterable[_T]]) -> AsyncIterator[_T]:
     async for it in iterable:
         for item in it:
             yield item
+
+
+_KT = TypeVar("_KT")
+_VT_co = TypeVar("_VT_co", covariant=True)
 
 
 async def _amap(

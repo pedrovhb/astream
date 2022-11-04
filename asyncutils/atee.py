@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from asyncio import Future
-from typing import TypeAlias, AsyncIterator, AsyncIterable, TypeVar
+from typing import AsyncIterable, AsyncIterator, TypeAlias, TypeVar
 
 import wrapt
 
@@ -93,6 +93,7 @@ class ClonableAsyncIterableWrapper(AsyncIterable[T], wrapt.ObjectProxy):  # noqa
 if __name__ == "__main__":
     import asyncio
     import random
+
     from asyncutils.amerge import amerge
 
     async def main() -> None:
@@ -113,3 +114,9 @@ if __name__ == "__main__":
             print(i)
 
     asyncio.run(main())
+
+"""
+The Python __index__ method is used to convert an object to an integer. 
+It is called when an object is used in a context where an integer is required, such as 
+when indexing a sequence or slicing a sequence.
+"""

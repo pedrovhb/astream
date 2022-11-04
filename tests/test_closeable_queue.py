@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-
 import asyncio
 from asyncio import Future
-from typing import TypeAlias, AsyncIterator, AsyncIterable, TypeVar
+from typing import AsyncIterable, AsyncIterator, TypeAlias, TypeVar
+
+import hypothesis.strategies as st
 
 import pytest
-import hypothesis.strategies as st
 
 from asyncutils import closeable_queue
 

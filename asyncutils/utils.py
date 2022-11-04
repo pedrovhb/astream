@@ -6,16 +6,21 @@ import inspect
 from abc import abstractmethod
 from asyncio import Future
 from typing import (
-    Iterable,
-    AsyncIterable,
-    TypeVar,
-    Callable,
     Any,
-    ParamSpec,
+    AsyncIterable,
     AsyncIterator,
-    runtime_checkable,
+    Callable,
     cast,
     Coroutine,
+    Hashable,
+    Iterable,
+    Mapping,
+    overload,
+    ParamSpec,
+    runtime_checkable,
+    Sequence,
+    SupportsIndex,
+    TypeVar,
 )
 
 from typing_extensions import Protocol
@@ -45,22 +50,9 @@ def stream(
 ) -> Callable[_P, Stream[_T]]:
     """A decorator that turns a generator or async generator function into a stream."""
 
-    if inspect.isasyncgenfunction(fn):
-        _async_fn = cast(Callable[_P, AsyncIterable[_T]], fn)
-
-        @functools.wraps(fn)
-        def _wrapped(*args: _P.args, **kwargs: _P.kwargs) -> Stream[_T]:
-            return Stream(_async_fn(*args, **kwargs))
-
-    elif inspect.isgeneratorfunction(fn):
-        _fn = cast(Callable[_P, Iterable[_T]], fn)
-
-        @functools.wraps(fn)
-        def _wrapped(*args: _P.args, **kwargs: _P.kwargs) -> Stream[_T]:
-            return Stream(_fn(*args, **kwargs))
-
-    else:
-        raise TypeError("fn must be a generator function or async generator function")
+    @functools.wraps(fn)
+    def _wrapped(*args: _P.args, **kwargs: _P.kwargs) -> Stream[_T]:
+        return Stream(fn(*args, **kwargs))
 
     return _wrapped
 
@@ -73,17 +65,32 @@ async def aenumerate(iterable: AsyncIterable[_T], start: int = 0) -> AsyncIterat
         start += 1
 
 
-@stream
+@overload
+async def apluck(iterable: AsyncIterable[Sequence[_T]], key: SupportsIndex) -> AsyncIterator[_T]:
+    ...
+
+
+@overload
 async def apluck(
-    iterable: AsyncIterable[SupportsGetItem[_KT, _VT]],
-    key: _KT,
+    iterable: AsyncIterable[Mapping[Hashable, _VT]], key: Hashable
 ) -> AsyncIterator[_VT]:
+    ...
+
+
+async def apluck(
+    iterable: AsyncIterable[SupportsGetItem[Hashable, _VT]] | AsyncIterable[Sequence[_T]],
+    key: SupportsIndex | Hashable,
+) -> AsyncIterator[_T] | AsyncIterator[_VT]:
     """An asynchronous version of `pluck`."""
+
     async for item in iterable:
-        yield item[key]
+        if isinstance(item, Sequence) and isinstance(key, SupportsIndex):
+            yield item[key]
+        else:
+            yield item[key]
 
 
-async def afilter(
+def afilter(
     fn: Callable[[_T], Coroutine[Any, Any, bool]] | Callable[[_T], bool],
     iterable: AsyncIterable[_T],
 ) -> Stream[_T]:
@@ -91,7 +98,7 @@ async def afilter(
     return Stream(iterable).afilter(fn)
 
 
-async def amap(
+def amap(
     fn: Callable[[_T], Coroutine[Any, Any, _U]] | Callable[[_T], _U],
     iterable: AsyncIterable[_T],
 ) -> Stream[_U]:
@@ -99,7 +106,7 @@ async def amap(
     return Stream(iterable).amap(fn)
 
 
-async def aflatmap(
+def aflatmap(
     fn: Callable[[_T], Coroutine[Any, Any, Iterable[_U]]]
     | Callable[[_T], AsyncIterable[_U]]
     | Callable[[_T], Iterable[_U]],
@@ -112,8 +119,7 @@ async def aflatmap(
 # todo - ascan
 
 
-@stream
-async def arange(start: int, stop: int | None = None, step: int = 1) -> AsyncIterator[int]:
+def arange(start: int, stop: int | None = None, step: int = 1) -> AsyncIterable[int]:
     """An asynchronous version of `range`.
 
     Args:
@@ -138,9 +144,7 @@ async def arange(start: int, stop: int | None = None, step: int = 1) -> AsyncIte
     if stop is None:
         stop = start
         start = 0
-
-    for i in range(start, stop, step):
-        yield i
+    return Stream(range(start, stop, step))
 
 
 def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:
@@ -162,39 +166,6 @@ def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:
         return loop.run_until_complete(f(*args, **kwargs))
 
     return decorated
-
-
-def make_queued(
-    fn: Callable[_P, Coroutine[Any, Any, _T]],
-    n_workers: int,
-    queue_size: int = 100,
-) -> Callable[_P, Coroutine[Any, Any, _T]]:
-    # todo - clean this up
-    queue = asyncio.Queue[tuple[tuple[Any, ...], dict[str, Any], Future[_T]]](maxsize=queue_size)
-
-    async def worker() -> None:
-        while True:
-            args, kwargs, fut = await queue.get()
-            try:
-                result = await fn(*args, **kwargs)
-                fut.set_result(result)
-            except Exception as e:
-                fut.set_exception(e)
-            finally:
-                queue.task_done()
-
-    workers = [asyncio.create_task(worker()) for _ in range(n_workers)]
-
-    @functools.wraps(fn)
-    async def _wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _T:
-        fut: Future[_T] = asyncio.get_running_loop().create_future()
-        await queue.put((args, kwargs, fut))
-        await fut
-        return fut.result()
-
-    _wrapped.workers = workers  # type: ignore
-
-    return _wrapped
 
 
 @stream
@@ -255,8 +226,22 @@ if __name__ == "__main__":
     async def main() -> None:
         # s = cast(Stream[Iterable[int]], (aenumerate(Stream(range(100, 110)) / str)))
         # todo - figure out how to make iterable detection work
-        s = aenumerate(arange(100, 110))
-        async for i in +s:
+        # s = aenumerate(arange(100, 110))
+        # async for i in +s:
+        #     print(i)
+
+        # async for i in Stream(range(10)):
+        #     print(i)
+        def t():
+            from itertools import cycle
+
+            return stream(cycle)(range(10))
+
+        # todo - make import hook context manager to allow import external library functions
+        #  as stream-decorated functions
+
+        async for i in t():
             print(i)
+            await asyncio.sleep(0.1)
 
     asyncio.run(main())

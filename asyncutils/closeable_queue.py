@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from asyncio.queues import (
+    LifoQueue as AsyncioLifoQueue,
+    PriorityQueue as AsyncioPriorityQueue,
+    Queue as AsyncioQueue,
+)
 from collections.abc import AsyncIterable
 from typing import TypeVar
-from asyncio.queues import (
-    Queue as AsyncioQueue,
-    PriorityQueue as AsyncioPriorityQueue,
-    LifoQueue as AsyncioLifoQueue,
-)
 
 
 T = TypeVar("T")
@@ -141,9 +141,9 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
             raise StopAsyncIteration
 
 
-class CloseablePriorityQueue(AsyncioPriorityQueue[T]):
+class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueue[T]):
     """A closeable version of PriorityQueue."""
 
 
-class CloseableLifoQueue(AsyncioLifoQueue[T]):
+class CloseableLifoQueue(AsyncioLifoQueue[T], CloseableQueue[T]):
     """A closeable version of LifoQueue."""
