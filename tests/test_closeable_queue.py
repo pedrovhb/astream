@@ -8,7 +8,7 @@ import hypothesis.strategies as st
 
 import pytest
 
-from asyncutils import closeable_queue
+from astream import closeable_queue
 
 
 # Test the CloseableQueue class in isolation

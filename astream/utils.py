@@ -25,7 +25,7 @@ from typing import (
 
 from typing_extensions import Protocol
 
-from asyncutils.stream import Stream
+from astream.stream import Stream
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")

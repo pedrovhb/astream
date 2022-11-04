@@ -94,7 +94,7 @@ if __name__ == "__main__":
     import asyncio
     import random
 
-    from asyncutils.amerge import amerge
+    from astream.amerge import amerge
 
     async def main() -> None:
         async def source() -> AsyncIterator[int]:

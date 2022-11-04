@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from asyncutils.stream import Stream
+from astream.stream import Stream
 
 
 @dataclass

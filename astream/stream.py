@@ -16,7 +16,7 @@ from typing import (
     TypeVar,
 )
 
-from asyncutils.closeable_queue import CloseableQueue, QueueExhausted
+from astream.closeable_queue import CloseableQueue, QueueExhausted
 
 _NextT = TypeVar("_NextT")
 _T = TypeVar("_T")

@@ -18,7 +18,7 @@ from typing import (
     TypeVar,
 )
 
-from asyncutils.closeable_queue import CloseableQueue
+from astream.closeable_queue import CloseableQueue
 
 _T = TypeVar("_T")
 _P = ParamSpec("_P")

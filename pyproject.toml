@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "asyncutils"
+name = "astream"
 version = "0.1.0"
 description = ""
 authors = ["Pedro Batista <pedrovhb@gmail.com>"]
@@ -7,7 +7,6 @@ authors = ["Pedro Batista <pedrovhb@gmail.com>"]
 [tool.poetry.dependencies]
 python = "^3.10"
 wrapt = "^1.14.1"
-coverage = "^6.5.0"
 
 [tool.poetry.dev-dependencies]
 black = "^22.10.0"
@@ -19,10 +18,7 @@ mypy = "^0.982"
 bump2version = "^1.0.1"
 usort = "^1.0.5"
 flake8 = "^5.0.4"
-rich = "^12.6.0"
-textual = "^0.2.1"
-lxml = "^4.9.1"
-pyre-check = "^0.9.16"
+coverage = "^6.5.0"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
