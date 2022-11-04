@@ -119,7 +119,7 @@ def aflatmap(
 # todo - ascan
 
 
-def arange(start: int, stop: int | None = None, step: int = 1) -> AsyncIterable[int]:
+def arange(start: int, stop: int | None = None, step: int = 1) -> Stream[int]:
     """An asynchronous version of `range`.
 
     Args:
