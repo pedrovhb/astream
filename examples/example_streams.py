@@ -5,8 +5,7 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import NamedTuple
 
-
-from asyncutils.transformer import Stream
+from asyncutils.stream import Stream
 
 
 @dataclass
@@ -44,8 +43,12 @@ async def main() -> None:
     ):
         print(employee)
 
-    # async for salary in stream:
-    #     print(salary)
+    # What employees in IT like pizza?
+    stream = Stream(db.iter_employees())
+
+    like_pizza = stream % (lambda e: e.department == "IT") % (lambda e: "pizza" in e.likes)
+    async for employee in like_pizza @ sum:
+        print(employee.name)
 
 
 if __name__ == "__main__":

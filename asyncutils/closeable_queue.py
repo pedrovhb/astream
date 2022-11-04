@@ -9,7 +9,6 @@ from asyncio.queues import (
     LifoQueue as AsyncioLifoQueue,
 )
 
-from asyncutils.protocols import CloseableQueueLike
 
 T = TypeVar("T")
 
@@ -22,7 +21,7 @@ class QueueExhausted(Exception):
     ...
 
 
-class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], CloseableQueueLike[T, T]):
+class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
     """A closeable version of the asyncio.Queue class.
 
     This class is a closeable version of the asyncio.Queue class.
@@ -117,14 +116,14 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], CloseableQueueLike[T, T]
             getter.set_exception(QueueExhausted())
 
     @property
-    def is_closed(self) -> bool:  # type: ignore
+    def is_closed(self) -> bool:
         return self._closed.is_set()
 
     async def wait_closed(self) -> None:
         await self._closed.wait()
 
     @property
-    def is_exhausted(self) -> bool:  # type: ignore
+    def is_exhausted(self) -> bool:
         return self._exhausted.is_set()
 
     async def wait_exhausted(self) -> None:
@@ -142,9 +141,9 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], CloseableQueueLike[T, T]
             raise StopAsyncIteration
 
 
-class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueueLike[T, T]):
+class CloseablePriorityQueue(AsyncioPriorityQueue[T]):
     """A closeable version of PriorityQueue."""
 
 
-class CloseableLifoQueue(AsyncioLifoQueue[T], CloseableQueueLike[T, T]):
+class CloseableLifoQueue(AsyncioLifoQueue[T]):
     """A closeable version of LifoQueue."""

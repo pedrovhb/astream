@@ -22,13 +22,15 @@ usort = "^1.0.5"
 flake8 = "^5.0.4"
 rich = "^12.6.0"
 textual = "^0.2.1"
+lxml = "^4.9.1"
+pyre-check = "^0.9.16"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_unused_configs = true
 warn_unused_ignores = true
 warn_redundant_casts = true

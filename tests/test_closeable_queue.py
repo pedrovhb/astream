@@ -185,7 +185,6 @@ async def test_closeable_queue_async_iter() -> None:
     results = []
     async for item in queue:
         results.append(item)
-        queue.task_done()
 
     assert results == [1, 2, 3]
     assert queue.is_closed
