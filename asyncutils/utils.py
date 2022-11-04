@@ -197,6 +197,59 @@ def make_queued(
     return _wrapped
 
 
+@stream
+async def amerge(*async_iters: AsyncIterable[_T]) -> AsyncIterator[_T]:
+    """Merge multiple async iterators into one, yielding items as they are received.
+
+    Args:
+        async_iters: The async iterators to merge.
+
+    Yields:
+        Items from the async iterators, as they are received.
+
+    Examples:
+        >>> async def a():
+        ...     for i in range(3):
+        ...         await asyncio.sleep(0.025)
+        ...         yield i
+        >>> async def b():
+        ...     for i in range(100, 106):
+        ...         await asyncio.sleep(0.01)
+        ...         yield i
+        >>> async def demo_amerge():
+        ...     async for item in amerge(a(), b()):
+        ...         print(item)
+        >>> asyncio.run(demo_amerge())
+        100
+        101
+        0
+        102
+        103
+        1
+        104
+        105
+        2
+    """
+    futs: dict[asyncio.Future[_T], AsyncIterator[_T]] = {}
+    for it in async_iters:
+        async_it = aiter(it)
+        fut = asyncio.ensure_future(anext(async_it))
+        futs[fut] = async_it
+
+    while futs:
+        done, _ = await asyncio.wait(futs, return_when=asyncio.FIRST_COMPLETED)
+        for done_fut in done:
+            try:
+                yield done_fut.result()
+            except StopAsyncIteration:
+                pass
+            else:
+                fut = asyncio.ensure_future(anext(futs[done_fut]))
+                futs[fut] = futs[done_fut]
+            finally:
+                del futs[done_fut]
+
+
 if __name__ == "__main__":
 
     async def main() -> None:

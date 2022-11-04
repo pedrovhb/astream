@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from asyncutils.stream import Stream
-from asyncutils.utils import arange
+from asyncutils.utils import arange, amerge
 
 
 # Test the CloseableQueue class in isolation
@@ -34,3 +34,19 @@ async def test_stream_filter() -> None:
         assert i == next(expected)
 
     assert next(expected, None) is None
+
+
+@pytest.mark.asyncio
+async def test_amerge() -> None:
+    expected = set(range(10))
+    expected.update(range(100, 120))
+    expected.update(range(200, 220))
+    actual = set[int]()
+    async for i in amerge(
+        arange(10),
+        arange(100, 120),
+        arange(200, 220),
+    ):
+        actual.add(i)
+
+    assert actual == expected
