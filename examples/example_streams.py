@@ -3,7 +3,6 @@ from __future__ import annotations
 import random
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import NamedTuple
 
 from astream.stream import Stream
 
@@ -13,18 +12,19 @@ class Employee:
     name: str
     department: str
     likes: list[str]
+    favorite_number: int
 
 
 class EmployeeDB:
 
     employees = [
-        Employee("Jane", "IT", ["pizza", "dogs"]),
-        Employee("Jack", "IT", ["pizza", "cats"]),
-        Employee("Bob", "HR", ["cats"]),
-        Employee("Alice", "HR", ["cats", "dogs"]),
-        Employee("Bob", "HR", ["cats", "pizza"]),
-        Employee("John", "IT", ["programming"]),
-        Employee("Alice", "HR", ["cats", "dogs", "pizza"]),
+        Employee("Jane", "IT", ["pizza", "dogs"], 4),
+        Employee("Jack", "IT", ["pizza", "cats"], 5),
+        Employee("Bob", "HR", ["cats"], 8),
+        Employee("Alice", "HR", ["cats", "dogs"], 6),
+        Employee("Bob", "HR", ["cats", "pizza"], 0),
+        Employee("John", "IT", ["programming"], 1),
+        Employee("Alice", "HR", ["cats", "dogs", "pizza"], 4),
     ]
 
     async def iter_employees(self) -> AsyncIterable[Employee]:
@@ -35,6 +35,13 @@ class EmployeeDB:
 
 async def main() -> None:
     db = EmployeeDB()
+
+    stream = Stream(db.iter_employees())
+
+    ss = stream / (lambda e: print(e.name) or e) / (lambda e: e.likes) / print
+
+    async for _ in ss:
+        pass
 
     # What employees in IT like pizza?
     stream = Stream(db.iter_employees())
@@ -47,8 +54,8 @@ async def main() -> None:
     stream = Stream(db.iter_employees())
 
     like_pizza = stream % (lambda e: e.department == "IT") % (lambda e: "pizza" in e.likes)
-    async for employee in like_pizza @ sum:
-        print(employee.name)
+    async for employee in like_pizza:
+        print(employee, "likes pizza and is in IT")
 
 
 if __name__ == "__main__":

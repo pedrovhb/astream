@@ -61,9 +61,6 @@ class WorkerPool(Generic[_P, _OutputT]):
         start: bool = True,
     ) -> None:
 
-        # todo - add option to either keep items in queue or discard them if not iterated on
-        #  (or have separate classes for either)
-
         if not inspect.iscoroutinefunction(fn):
             _fn_sync = cast(Callable[_P, _OutputT], fn)
 
@@ -135,53 +132,6 @@ class WorkerPool(Generic[_P, _OutputT]):
                     worker_idle_event.set()
 
 
-# class AsyncIterableWorkerPool(Generic[_P2, _OutputT], WorkerPool[_P2, _OutputT]):
-#     def __init__(
-#         self,
-#         fn: Callable[_P2, Coro[_OutputT]] | Callable[_P2, _OutputT],
-#         n_workers: int,
-#         queue_size: int = 100,
-#         start: bool = True,
-#     ) -> None:
-#         super().__init__(fn, n_workers, queue_size, start)
-#
-#     def _on_input_exhausted(self, fut: Future[None]) -> None:
-#         print("input exhausted, closing output")
-#         asyncio.create_task(self._out_q.wait_closed()).add_done_callback(
-#             lambda _: print("output closed")
-#         )
-#         asyncio.create_task(self._out_q.wait_exhausted()).add_done_callback(
-#             lambda _: print("output exhausted")
-#         )
-#         # asyncio.create_task(self._out_q.wait_exhausted()).add_done_callback(
-#         #     lambda _: self._async_iter_task.cancel()
-#         # )
-#         self._out_q.close()
-#
-#     def close(self) -> None:
-#         if not self._in_q.is_closed:
-#             self._in_q.close()
-#         # todo - how do we properly wait for items to be done?
-#         #  what if the stream is never iterated on and the queue is never exhausted/just blocks?
-#         #  keep items only if aiter or stream have been accessed?
-#         #  have a drainer that just discards items on the async if the pool is created without
-#         #    being async iterable?
-#
-#     @cached_property
-#     async def _async_iter(self) -> AsyncIterator[_OutputT]:
-#         # todo - how to close this? is it necessary?
-#         async for fut, item in self._out_q:
-#             yield item
-#
-#     @cached_property
-#     def stream(self) -> Stream[_OutputT]:
-#         print("creating stream")
-#         return Stream(self._async_iter)
-#
-#     def __aiter__(self) -> AsyncIterator[_OutputT]:
-#         return self.stream
-
-
 def run_in_worker_pool(
     n_workers: int,
     queue_size: int = 100,
@@ -192,20 +142,65 @@ def run_in_worker_pool(
     return functools.partial(wp_factory, n_workers=n_workers, queue_size=queue_size, start=start)
 
 
+"""
+
+crazy ideas - ignore
+
+stream = Stream(range(10)) 
+    / mul(10) 
+    / apply_conditional(on=last_digit, fn={
+        0: mul(2),
+        1: mul(3) / sum_5,
+        5: mul(4),
+        DEFAULT: mul(5),
+    })
+    / div_2
+    
+stream = Stream(range(10))
+    / mul(10)
+    / route_conditional(on=last_digit, to={
+        0: queue_1 / mul(2) @ sum,
+        1: queue_2 / mul(3),
+        DEFAULT: PASS_THROUGH,
+    )
+    / process_passed_through
+    
+    stream_0s = queue_1 / sum_5
+    stream_1s = queue_2 / sum_5
+    
+stream = Stream(range(10))
+    / mul(10)
+    / {
+        is_fizzbuzz: print(X, "fizzbuzz"),
+        is_fizz: print(X, "fizz"),
+        is_buzz: print(X, "buzz"),
+        DEFAULT: print(X),
+    }
+    
+    
+stream = Stream(range(10))
+    / mul(10)
+    / {
+        is_fizzbuzz: Stream / mul_2 / lambda it: print(it, "fizzbuzz"),
+        is_fizz: print(X, "fizz"),
+        is_buzz: print(X, "buzz"),
+        DEFAULT: print(X),
+    }
+
+"""
+
 if __name__ == "__main__":
 
     async def main() -> None:
-        @run_in_worker_pool(5, 46)
-        async def fn(x: int) -> float:
+        @run_in_worker_pool(4)
+        async def my_fn(x: int) -> float:
             await asyncio.sleep(0.05)
             return 420 / (x - 69)
 
-        # todo - there's a bug in arange/Stream that causes it to not stop
-
         async def funner(range_start: int) -> None:
             for x in range(range_start, range_start + 10):
-                f = fn(x)
-                print(fn.n_idle_workers)
+                f = my_fn(x)
+                print(my_fn.n_idle_workers)
                 await asyncio.sleep(random.uniform(0.01, 0.1))
                 try:
                     print(f"result: {await f}")
@@ -216,7 +211,7 @@ if __name__ == "__main__":
         tasks = [asyncio.create_task(funner(i * 10)) for i in range(10)]
         print("waiting for tasks")
         await asyncio.gather(*tasks)
-        await fn.close()
+        await my_fn.close()
         print("done")
 
     asyncio.run(main())

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from asyncio import CancelledError
 from asyncio.queues import (
     LifoQueue as AsyncioLifoQueue,
     PriorityQueue as AsyncioPriorityQueue,
     Queue as AsyncioQueue,
 )
 from collections.abc import AsyncIterable
-from typing import TypeVar
-
+from typing import Any, Coroutine, TypeAlias, TypeVar
 
 T = TypeVar("T")
+Coro: TypeAlias = Coroutine[Any, Any, T]
 
 
 class QueueClosed(Exception):
@@ -42,10 +43,14 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
     _getters: list[asyncio.Future[None]]
     _finished: asyncio.Event
 
+    _close_getters: list[asyncio.Future[T]]
+
     def __init__(self, maxsize: int = 0) -> None:
         super().__init__(maxsize)
         self._closed = asyncio.Event()
         self._exhausted = asyncio.Event()
+
+        self._close_getters = []
 
     async def put(self, item: T) -> None:
         """Put an item into the queue.
@@ -80,7 +85,12 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
 
         if self.is_exhausted:
             raise QueueExhausted()
-        return await super().get()
+        try:
+            return await super().get()
+        except CancelledError:
+            if self.is_exhausted:
+                raise QueueExhausted()
+            raise
 
     def get_nowait(self) -> T:
         """Remove and return an item from the queue without blocking.
@@ -94,6 +104,7 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
         """
         if self.is_exhausted:
             raise QueueExhausted()
+
         return super().get_nowait()
 
     def task_done(self) -> None:
@@ -113,7 +124,7 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
     def _set_exhausted(self) -> None:
         self._exhausted.set()
         for getter in self._getters:
-            getter.set_exception(QueueExhausted())
+            getter.cancel()
 
     @property
     def is_closed(self) -> bool:
@@ -139,6 +150,14 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
             return item
         except QueueExhausted:
             raise StopAsyncIteration
+
+    # def __repr__(self) -> str:
+    #     return (
+    #         f"{self.__class__.__name__}("
+    #         f"max={self.maxsize}, crt={self.qsize()}, getters={self._getters}, "
+    #         f"putters={self._putters}, closed={self.is_closed}, exhausted={self.is_exhausted}"
+    #         f")"
+    #     )
 
 
 class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueue[T]):

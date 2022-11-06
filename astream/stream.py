@@ -13,15 +13,20 @@ from typing import (
     Iterator,
     overload,
     Protocol,
+    Sequence,
+    TypeAlias,
     TypeVar,
 )
 
 from astream.closeable_queue import CloseableQueue, QueueExhausted
+from astream.utils import ensure_async_iterator, ensure_coro_fn
 
 _NextT = TypeVar("_NextT")
 _T = TypeVar("_T")
 
 _T_co = TypeVar("_T_co", covariant=True)
+
+Coro: TypeAlias = Coroutine[Any, Any, _T]
 
 
 class IsIterable(Protocol[_T_co]):
@@ -42,104 +47,64 @@ async def _flatten(iterable: AsyncIterable[Iterable[_T]]) -> AsyncIterator[_T]:
             yield item
 
 
-_KT = TypeVar("_KT")
-_VT_co = TypeVar("_VT_co", covariant=True)
-
-
 async def _amap(
-    fn: Callable[[_T], Coroutine[Any, Any, _NextT]] | Callable[[_T], _NextT],
+    fn: Callable[[_T], Coro[_NextT]] | Callable[[_T], _NextT],
     iterable: AsyncIterable[_T],
 ) -> AsyncIterator[_NextT]:
     """An asynchronous version of `map`."""
-    if inspect.iscoroutinefunction(fn):
-        _async_fn = cast(Callable[[_T], Coroutine[Any, Any, _NextT]], fn)
-        async for item in iterable:
-            yield await _async_fn(item)
-
-    else:
-        _sync_fn = cast(Callable[[_T], _NextT], fn)
-        async for item in iterable:
-            yield _sync_fn(item)
+    _async_fn = ensure_coro_fn(fn)
+    async for item in iterable:
+        yield await _async_fn(item)
 
 
 async def _afilter(
-    fn: Callable[[_T], Coroutine[Any, Any, bool]] | Callable[[_T], bool],
+    fn: Callable[[_T], Coro[bool]] | Callable[[_T], bool],
     iterable: AsyncIterable[_T],
 ) -> AsyncIterator[_T]:
     """An asynchronous version of `filter`."""
-    if inspect.iscoroutinefunction(fn):
-        _async_fn = cast(Callable[[_T], Coroutine[Any, Any, bool]], fn)
-        async for item in iterable:
-            if await _async_fn(item):
-                yield item
-
-    else:
-        _sync_fn = cast(Callable[[_T], bool], fn)
-        async for item in iterable:
-            if _sync_fn(item):
-                yield item
+    _async_fn = ensure_coro_fn(fn)
+    async for item in iterable:
+        if await _async_fn(item):
+            yield item
 
 
 async def _aflatmap(
     fn: Callable[[_T], Iterable[_NextT]]
-    | Callable[[_T], Coroutine[Any, Any, Iterable[_NextT]]]
+    | Callable[[_T], Coro[Iterable[_NextT]]]
     | Callable[[_T], AsyncIterable[_NextT]],
     iterable: AsyncIterable[_T],
 ) -> AsyncIterator[_NextT]:
     """An asynchronous version of `flatmap`."""
-    if inspect.iscoroutinefunction(fn):
-        _async_fn = cast(Callable[[_T], Coroutine[Any, Any, Iterable[_NextT]]], fn)
-        async for item in iterable:
-            for subitem in await _async_fn(item):
-                yield subitem
 
-    elif inspect.isasyncgenfunction(fn):
+    # If the function is an async generator, yield from it.
+    if inspect.isasyncgenfunction(fn):
         _async_gen = cast(Callable[[_T], AsyncIterable[_NextT]], fn)
         async for item in iterable:
             async for subitem in _async_gen(item):
                 yield subitem
 
+    # If it returns an iterable, we flatten it
     else:
-        _sync_fn = cast(Callable[[_T], Iterable[_NextT]], fn)
+        _coro = ensure_coro_fn(fn)
+        _async_fn = cast(Callable[[_T], Coro[Iterable[_NextT]]], _coro)
         async for item in iterable:
-            for subitem in _sync_fn(item):
+            for subitem in await _async_fn(item):
                 yield subitem
 
 
-def _iter_to_aiter(iterable: Iterable[_T]) -> AsyncIterator[_T]:
-    """Convert an iterable to an async iterable (running the iterable in a background thread)."""
-
-    q = CloseableQueue[_T]()
-    loop = asyncio.get_running_loop()
-
-    def _inner() -> None:
-        for it in iterable:
-            loop.call_soon_threadsafe(q.put_nowait, it)
-        loop.call_soon_threadsafe(q.close)
-
-    asyncio.create_task(asyncio.to_thread(_inner))
-    return aiter(q)
-
-
-class Stream(AsyncIterable[_T]):
+class Stream(AsyncIterator[_T]):
     def __init__(  # noqa
         self,
         iterable: AsyncIterable[_T] | Iterable[_T],
         max_out_q_size: int = 0,
         start: bool = True,
     ) -> None:
-        self._out_q = CloseableQueue[_T](maxsize=max_out_q_size)
+        self._out_q: CloseableQueue[_T] = CloseableQueue(maxsize=max_out_q_size)
 
         self._started = asyncio.Event()
         self._closed = asyncio.Event()
 
-        if isinstance(iterable, AsyncIterable):
-            async_iterable = iterable
-        elif isinstance(iterable, Iterable):
-            async_iterable = _iter_to_aiter(iterable)  # todo - doesn't seem to be working
-        else:
-            raise TypeError(f"StreamTransformer got non-iterable and non-asynciterable {iterable}")
-        self._async_iterator = aiter(async_iterable)
+        self._async_iterator = ensure_async_iterator(iterable, to_thread=True)
 
         if start:
             self.start()
@@ -167,11 +132,12 @@ class Stream(AsyncIterable[_T]):
     async def gather(self) -> list[_T]:
         return [it async for it in self]
 
-    def __aiter__(self) -> AsyncIterator[_T]:
-        return aiter(self._out_q)
+    async def acollect(self, fn: Callable[[Sequence[_T]], Coro[_NextT]]) -> _NextT:
+        # todo - take max_out_q_size into account, accept sync fn
+        return await fn([it async for it in self])
 
     @overload
-    def amap(self, fn: Callable[[_T], Coroutine[Any, Any, _NextT]]) -> Stream[_NextT]:
+    def amap(self, fn: Callable[[_T], Coro[_NextT]]) -> Stream[_NextT]:
         ...
 
     @overload
@@ -186,7 +152,7 @@ class Stream(AsyncIterable[_T]):
         )
 
     @overload
-    def afilter(self, fn: Callable[[_T], Coroutine[Any, Any, bool]]) -> Stream[_T]:
+    def afilter(self, fn: Callable[[_T], Coro[bool]]) -> Stream[_T]:
         ...
 
     @overload
@@ -201,7 +167,7 @@ class Stream(AsyncIterable[_T]):
         )
 
     @overload
-    def aflatmap(self, fn: Callable[[_T], Coroutine[Any, Any, Iterable[_NextT]]]) -> Stream[_NextT]:
+    def aflatmap(self, fn: Callable[[_T], Coro[Iterable[_NextT]]]) -> Stream[_NextT]:
         ...
 
     @overload
@@ -226,9 +192,18 @@ class Stream(AsyncIterable[_T]):
             start=self._started.is_set(),
         )
 
+    async def __anext__(self) -> _T:
+        try:
+            item = await self._out_q.get()
+            self._out_q.task_done()
+            return item
+        except QueueExhausted:
+            raise StopAsyncIteration
+
     __truediv__ = amap  # Stream(range(10)) / lambda x: x * 2  --> 0, 2, 4, 6, 8, ...
     __floordiv__ = aflatmap  # Stream(range(10)) // lambda x: [x, x * 2]  --> 0, 0, 1, 2, 2, 4, ...
     __mod__ = afilter  # Stream(range(10)) % lambda x: x % 2 == 0  --> 0, 2, 4, 6, 8, ...
     __pos__ = flatten  # +Stream([[0, 1], [2, 3]]) --> 0, 1, 2, 3
+    __matmul__ = acollect  # Stream(range(10)) @ sum --> 45
 
     # todo - agather with @

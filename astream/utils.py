@@ -2,149 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import inspect
-from abc import abstractmethod
 from asyncio import Future
-from typing import (
-    Any,
-    AsyncIterable,
-    AsyncIterator,
-    Callable,
-    cast,
-    Coroutine,
-    Hashable,
-    Iterable,
-    Mapping,
-    overload,
-    ParamSpec,
-    runtime_checkable,
-    Sequence,
-    SupportsIndex,
-    TypeVar,
-)
+from typing import *
 
-from typing_extensions import Protocol
-
-from astream.stream import Stream
-
-_T = TypeVar("_T")
-_U = TypeVar("_U")
+from astream.closeable_queue import CloseableQueue
 
 _P = ParamSpec("_P")
-
-_KT = TypeVar("_KT", contravariant=True)
-_VT = TypeVar("_VT", covariant=True)
+_T = TypeVar("_T")
 
 
-@runtime_checkable
-class SupportsGetItem(Protocol[_KT, _VT]):
-    """A protocol for objects that support `__getitem__`."""
-
-    @abstractmethod
-    def __getitem__(self, key: _KT) -> _VT:
-        ...
+class _SentinelT:
+    pass
 
 
-def stream(
-    fn: Callable[_P, AsyncIterable[_T]] | Callable[_P, Iterable[_T]],
-) -> Callable[_P, Stream[_T]]:
-    """A decorator that turns a generator or async generator function into a stream."""
-
-    @functools.wraps(fn)
-    def _wrapped(*args: _P.args, **kwargs: _P.kwargs) -> Stream[_T]:
-        return Stream(fn(*args, **kwargs))
-
-    return _wrapped
-
-
-@stream
-async def aenumerate(iterable: AsyncIterable[_T], start: int = 0) -> AsyncIterator[tuple[int, _T]]:
-    """An asynchronous version of `enumerate`."""
-    async for item in iterable:
-        yield start, item
-        start += 1
-
-
-@overload
-async def apluck(iterable: AsyncIterable[Sequence[_T]], key: SupportsIndex) -> AsyncIterator[_T]:
-    ...
-
-
-@overload
-async def apluck(
-    iterable: AsyncIterable[Mapping[Hashable, _VT]], key: Hashable
-) -> AsyncIterator[_VT]:
-    ...
-
-
-async def apluck(
-    iterable: AsyncIterable[SupportsGetItem[Hashable, _VT]] | AsyncIterable[Sequence[_T]],
-    key: SupportsIndex | Hashable,
-) -> AsyncIterator[_T] | AsyncIterator[_VT]:
-    """An asynchronous version of `pluck`."""
-
-    async for item in iterable:
-        if isinstance(item, Sequence) and isinstance(key, SupportsIndex):
-            yield item[key]
-        else:
-            yield item[key]
-
-
-def afilter(
-    fn: Callable[[_T], Coroutine[Any, Any, bool]] | Callable[[_T], bool],
-    iterable: AsyncIterable[_T],
-) -> Stream[_T]:
-    """An asynchronous version of `filter`."""
-    return Stream(iterable).afilter(fn)
-
-
-def amap(
-    fn: Callable[[_T], Coroutine[Any, Any, _U]] | Callable[[_T], _U],
-    iterable: AsyncIterable[_T],
-) -> Stream[_U]:
-    """An asynchronous version of `map`."""
-    return Stream(iterable).amap(fn)
-
-
-def aflatmap(
-    fn: Callable[[_T], Coroutine[Any, Any, Iterable[_U]]]
-    | Callable[[_T], AsyncIterable[_U]]
-    | Callable[[_T], Iterable[_U]],
-    iterable: AsyncIterable[_T],
-) -> Stream[_U]:
-    """An asynchronous version of `flatmap`."""
-    return Stream(iterable).aflatmap(fn)
-
-
-# todo - ascan
-
-
-def arange(start: int, stop: int | None = None, step: int = 1) -> Stream[int]:
-    """An asynchronous version of `range`.
-
-    Args:
-        start: The start of the range.
-        stop: The end of the range.
-        step: The step of the range.
-
-    Yields:
-        The next item in the range.
-
-    Examples:
-        >>> async def demo_arange():
-        ...     async for i in arange(5):
-        ...         print(i)
-        >>> asyncio.run(demo_arange())
-        0
-        1
-        2
-        3
-        4
-    """
-    if stop is None:
-        stop = start
-        start = 0
-    return Stream(range(start, stop, step))
+NoValueSentinel = _SentinelT()
 
 
 def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:
@@ -168,80 +39,97 @@ def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:
     return decorated
 
 
-@stream
-async def amerge(*async_iters: AsyncIterable[_T]) -> AsyncIterator[_T]:
-    """Merge multiple async iterators into one, yielding items as they are received.
+def _iter_to_aiter_threaded(iterable: Iterable[_T]) -> AsyncIterator[_T]:
+    """Convert an iterable to an async iterable (running the iterable in a background thread)."""
+
+    q = CloseableQueue[_T]()
+    loop = asyncio.get_running_loop()
+
+    def _inner() -> None:
+        for it in iterable:
+            loop.call_soon_threadsafe(q.put_nowait, it)
+        loop.call_soon_threadsafe(q.close)
+
+    asyncio.create_task(asyncio.to_thread(_inner))
+    return aiter(q)
+
+
+def iter_to_aiter(iterable: Iterable[_T], to_thread: bool) -> AsyncIterator[_T]:
+    """Convert an iterable to an async iterable.
 
     Args:
-        async_iters: The async iterators to merge.
+        iterable: The iterable to convert.
+        to_thread: Whether to run the iterable in a background thread.
 
-    Yields:
-        Items from the async iterators, as they are received.
-
-    Examples:
-        >>> async def a():
-        ...     for i in range(3):
-        ...         await asyncio.sleep(0.025)
-        ...         yield i
-        >>> async def b():
-        ...     for i in range(100, 106):
-        ...         await asyncio.sleep(0.01)
-        ...         yield i
-        >>> async def demo_amerge():
-        ...     async for item in amerge(a(), b()):
-        ...         print(item)
-        >>> asyncio.run(demo_amerge())
-        100
-        101
-        0
-        102
-        103
-        1
-        104
-        105
-        2
+    Returns:
+        An async iterable.
     """
-    futs: dict[asyncio.Future[_T], AsyncIterator[_T]] = {}
-    for it in async_iters:
-        async_it = aiter(it)
-        fut = asyncio.ensure_future(anext(async_it))
-        futs[fut] = async_it
 
-    while futs:
-        done, _ = await asyncio.wait(futs, return_when=asyncio.FIRST_COMPLETED)
-        for done_fut in done:
-            try:
-                yield done_fut.result()
-            except StopAsyncIteration:
-                pass
-            else:
-                fut = asyncio.ensure_future(anext(futs[done_fut]))
-                futs[fut] = futs[done_fut]
-            finally:
-                del futs[done_fut]
+    if to_thread:
+        return _iter_to_aiter_threaded(iterable)
+
+    @functools.wraps(iterable.__iter__)
+    async def _inner() -> AsyncIterator[_T]:
+        for it in iterable:
+            yield it
+            print("put", it, "in iter_to_aiter")
+            await asyncio.sleep(0)
+
+    return _inner()
 
 
-if __name__ == "__main__":
+def ensure_coro_fn(
+    fn: Callable[_P, _T] | Callable[_P, Coroutine[Any, Any, _T]],
+    to_thread: bool = False,
+) -> Callable[_P, Coroutine[Any, Any, _T]]:
+    """Given a sync or async function, return an async function.
 
-    async def main() -> None:
-        # s = cast(Stream[Iterable[int]], (aenumerate(Stream(range(100, 110)) / str)))
-        # todo - figure out how to make iterable detection work
-        # s = aenumerate(arange(100, 110))
-        # async for i in +s:
-        #     print(i)
+    Args:
+        fn: The function to ensure is async.
+        to_thread: Whether to run the function in a thread, if it is sync.
 
-        # async for i in Stream(range(10)):
-        #     print(i)
-        def t():
-            from itertools import cycle
+    Returns:
+        An async function that runs the original function.
+    """
 
-            return stream(cycle)(range(10))
+    if asyncio.iscoroutinefunction(fn):
+        return fn
 
-        # todo - make import hook context manager to allow import external library functions
-        #  as stream-decorated functions
+    _sync_fn = cast(Callable[_P, _T], fn)
+    if to_thread:
 
-        async for i in t():
-            print(i)
-            await asyncio.sleep(0.1)
+        @functools.wraps(fn)
+        async def _async_fn(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+            return await asyncio.to_thread(_sync_fn, *args, **kwargs)
 
-    asyncio.run(main())
+    else:
+
+        @functools.wraps(fn)
+        async def _async_fn(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+            return _sync_fn(*args, **kwargs)
+
+    return _async_fn
+
+
+def ensure_async_iterator(
+    iterable: Iterable[_T] | AsyncIterable[_T],
+    to_thread: bool = True,
+) -> AsyncIterator[_T]:
+    """Given an iterable or async iterable, return an async iterable.
+
+    Args:
+        iterable: The iterable to ensure is async.
+        to_thread: Whether to run the iterable in a thread, if it is sync.
+
+    Returns:
+        An async iterable that runs the original iterable.
+    """
+
+    if isinstance(iterable, AsyncIterable):
+        return aiter(iterable)
+
+    return aiter(iter_to_aiter(iterable, to_thread=to_thread))
+
+
+def create_future() -> Future[_T]:
+    return asyncio.get_running_loop().create_future()

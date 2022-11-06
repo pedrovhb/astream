@@ -79,7 +79,7 @@ clone_2 = clone_1.aclone()
 ```
 
 - todo - implement same model for afilter, amap
-	- todo - atransform? more general operation which doesn't necessarily map 1:1 - comprehends amap, a filter, aflatmap, etc.
+    - todo - atransform? more general operation which doesn't necessarily map 1:1 - comprehends amap, a filter, aflatmap, etc.
 
 ## CloseableQueue
 
@@ -128,14 +128,14 @@ Distribution of work across multiple workers, with support for backpressure and 
  <summary>Self-notes</summary>
 
 - Todo - explore an API for populating queues from async iterators. Considerations:
-	- Could be either an external function, or a function in CloseableQueue itself. If an external function, it could also be used for populating standard library Queues.
-	- It'd be quite useful for composed/functional pipelines to have the option to close the queue after the async iterator is done.
-		- This could be a separate function (`populate_and_close`) or a parameter `populate_queue(aiter, close_when_done=True)`.
-			- The parameter wouldn't make sense for standard lib queues
-		- What happens when two async iterators are set to populate the queue and then close it?
-			- Most sane thing would be to wait until both are finished, then close it
-				- Easy to do cleanly if it's a method of the CloseableQueue, not so much if it's a standalone function - requires keeping global state
-		- Possibility
-			- Have both a simple `populate_queue` standalone function with no closing functionality which works for both standard queues and closeable ones, and have a `populate` method in closeable queues which takes the `close_when_done` param
+    - Could be either an external function, or a function in CloseableQueue itself. If an external function, it could also be used for populating standard library Queues.
+    - It'd be quite useful for composed/functional pipelines to have the option to close the queue after the async iterator is done.
+        - This could be a separate function (`populate_and_close`) or a parameter `populate_queue(aiter, close_when_done=True)`.
+            - The parameter wouldn't make sense for standard lib queues
+        - What happens when two async iterators are set to populate the queue and then close it?
+            - Most sane thing would be to wait until both are finished, then close it
+                - Easy to do cleanly if it's a method of the CloseableQueue, not so much if it's a standalone function - requires keeping global state
+        - Possibility
+            - Have both a simple `populate_queue` standalone function with no closing functionality which works for both standard queues and closeable ones, and have a `populate` method in closeable queues which takes the `close_when_done` param
 
 </details>

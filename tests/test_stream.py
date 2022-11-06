@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from astream.stream import Stream
-from astream.utils import amerge, arange
+from astream.stream_utils import amerge, arange
 
 
 # Test the CloseableQueue class in isolation
