@@ -156,3 +156,6 @@ class StreamGrouper(Generic[_T, _KeyT], Mapping[_KeyT, Stream[_T]]):
 
     def __iter__(self) -> Iterator[_KeyT]:
         return iter(self._key_queues)
+
+
+__all__ = ("StreamGrouper",)

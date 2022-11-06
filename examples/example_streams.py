@@ -3,8 +3,7 @@ from __future__ import annotations
 import random
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-
-from astream.stream import Stream
+from astream import stream
 
 
 @dataclass
@@ -36,24 +35,22 @@ class EmployeeDB:
 async def main() -> None:
     db = EmployeeDB()
 
-    stream = Stream(db.iter_employees())
+    st = stream(db.iter_employees())
 
-    ss = stream / (lambda e: print(e.name) or e) / (lambda e: e.likes) / print
+    ss = st / (lambda e: print(e.name) or e) / (lambda e: e.likes) / print
 
     async for _ in ss:
         pass
 
     # What employees in IT like pizza?
-    stream = Stream(db.iter_employees())
-    async for employee in stream % (lambda e: e.department == "IT") % (
-        lambda e: "pizza" in e.likes
-    ):
+    st = stream(db.iter_employees())
+    async for employee in st % (lambda e: e.department == "IT") % (lambda e: "pizza" in e.likes):
         print(employee)
 
     # What employees in IT like pizza?
-    stream = Stream(db.iter_employees())
+    st = stream(db.iter_employees())
 
-    like_pizza = stream % (lambda e: e.department == "IT") % (lambda e: "pizza" in e.likes)
+    like_pizza = st % (lambda e: e.department == "IT") % (lambda e: "pizza" in e.likes)
     async for employee in like_pizza:
         print(employee, "likes pizza and is in IT")
 

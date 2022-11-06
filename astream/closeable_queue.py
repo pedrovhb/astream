@@ -166,3 +166,12 @@ class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueue[T]):
 
 class CloseableLifoQueue(AsyncioLifoQueue[T], CloseableQueue[T]):
     """A closeable version of LifoQueue."""
+
+
+__all__ = (
+    "CloseableQueue",
+    "CloseablePriorityQueue",
+    "CloseableLifoQueue",
+    "QueueClosed",
+    "QueueExhausted",
+)

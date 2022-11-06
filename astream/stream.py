@@ -207,3 +207,6 @@ class Stream(AsyncIterator[_T]):
     __matmul__ = acollect  # Stream(range(10)) @ sum --> 45
 
     # todo - agather with @
+
+
+__all__ = ("Stream",)

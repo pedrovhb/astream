@@ -142,6 +142,8 @@ def run_in_worker_pool(
     return functools.partial(wp_factory, n_workers=n_workers, queue_size=queue_size, start=start)
 
 
+__all__ = ("WorkerPool", "run_in_worker_pool")
+
 """
 
 crazy ideas - ignore

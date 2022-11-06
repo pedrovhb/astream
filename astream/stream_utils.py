@@ -14,6 +14,7 @@ from typing import (
     ParamSpec,
     runtime_checkable,
     TypeVar,
+    overload,
 )
 
 from typing_extensions import Protocol
@@ -39,14 +40,36 @@ class SupportsGetItem(Protocol[_KT, _VT]):
         ...
 
 
+@overload
+def stream(
+    fn: Iterable[_T] | AsyncIterable[_T],
+) -> Stream[_T]:
+    ...
+
+
+@overload
 def stream(
     fn: Callable[_P, AsyncIterable[_T]] | Callable[_P, Iterable[_T]],
 ) -> Callable[_P, Stream[_T]]:
+    ...
+
+
+def stream(
+    fn: Callable[_P, AsyncIterable[_T]]
+    | Callable[_P, Iterable[_T]]
+    | AsyncIterable[_T]
+    | Iterable[_T],
+) -> Callable[_P, Stream[_T]] | Stream[_T]:
     """A decorator that turns a generator or async generator function into a stream."""
 
-    @functools.wraps(fn)
+    if isinstance(fn, AsyncIterable) or isinstance(fn, Iterable):
+        return Stream(fn)
+
+    _fn = fn
+
+    @functools.wraps(_fn)
     def _wrapped(*args: _P.args, **kwargs: _P.kwargs) -> Stream[_T]:
-        return Stream(fn(*args, **kwargs))
+        return Stream(_fn(*args, **kwargs))
 
     return _wrapped
 
@@ -273,3 +296,18 @@ async def areduce(
     async for item in _it_async:
         crt = await _fn_async(crt, item)
     return crt
+
+
+__all__ = (
+    "stream",
+    "aenumerate",
+    "agetitem",
+    "agetattr",
+    "afilter",
+    "amap",
+    "aflatmap",
+    "arange",
+    "amerge",
+    "ascan",
+    "areduce",
+)
