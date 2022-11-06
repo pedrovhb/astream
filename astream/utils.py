@@ -11,11 +11,11 @@ _P = ParamSpec("_P")
 _T = TypeVar("_T")
 
 
-class _SentinelT:
+class SentinelType:
     pass
 
 
-NoValueSentinel = _SentinelT()
+NoValueSentinel = SentinelType()
 
 
 def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:
@@ -141,4 +141,6 @@ __all__ = (
     "ensure_coro_fn",
     "ensure_async_iterator",
     "create_future",
+    "NoValueSentinel",
+    "SentinelType",
 )

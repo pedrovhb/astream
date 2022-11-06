@@ -12,15 +12,15 @@ from typing import (
     Coroutine,
     Iterable,
     ParamSpec,
+    Protocol,
     runtime_checkable,
     TypeVar,
     overload,
 )
 
-from typing_extensions import Protocol
 
 from astream.stream import Stream
-from astream.utils import _SentinelT, ensure_async_iterator, ensure_coro_fn, NoValueSentinel
+from astream.utils import SentinelType, ensure_async_iterator, ensure_coro_fn, NoValueSentinel
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -223,7 +223,7 @@ async def amerge(*async_iters: AsyncIterable[_T]) -> AsyncIterator[_T]:
 async def ascan(
     fn: Callable[[_T, _U], Coroutine[Any, Any, _T]] | Callable[[_T, _U], _T],
     iterable: AsyncIterable[_U],
-    initial: _T | _SentinelT = NoValueSentinel,
+    initial: _T | SentinelType = NoValueSentinel,
 ) -> AsyncIterator[_T]:
     """An asynchronous version of `scan`.
 
@@ -263,7 +263,7 @@ async def ascan(
 async def areduce(
     fn: Callable[[_T, _U], Coroutine[Any, Any, _T]] | Callable[[_T, _U], _T],
     iterable: AsyncIterable[_U],
-    initial: _T | _SentinelT = NoValueSentinel,
+    initial: _T | SentinelType = NoValueSentinel,
 ) -> _T:
     """An asynchronous version of `reduce`.
 
