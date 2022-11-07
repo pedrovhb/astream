@@ -15,7 +15,8 @@ class SentinelType:
     pass
 
 
-NoValueSentinel = SentinelType()
+_NoValueSentinelT = NewType("_NoValueSentinelT", SentinelType)
+NoValueSentinel = _NoValueSentinelT(SentinelType())  # noqa
 
 
 def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:

@@ -4,11 +4,21 @@ import asyncio
 import functools
 from asyncio import Future, Task
 from collections import defaultdict
+from enum import Enum
 from typing import *
 
+from astream import arange
 from astream.closeable_queue import CloseableQueue
-from astream.stream import Stream
-from astream.utils import create_future, ensure_coro_fn
+from astream.experimental.partializer import F
+from astream.stream import Stream, WithStream
+from astream.stream_utils import arange_delayed, amerge
+from astream.utils import (
+    create_future,
+    ensure_coro_fn,
+    SentinelType,
+    NoValueSentinel,
+    _NoValueSentinelT,
+)
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -16,7 +26,12 @@ _KeyT = TypeVar("_KeyT")
 
 _P = ParamSpec("_P")
 Coro: TypeAlias = Coroutine[Any, Any, _T]
-_GroupingFunctionT: TypeAlias = Callable[[_T], _KeyT]
+_GroupingFunctionT: TypeAlias = Union[Callable[[_T], _KeyT], Callable[[_T], Coro[_KeyT]]]
+
+UnaryFn: TypeAlias = Union[Callable[[_T], _U], Callable[[_T], Coro[_U]]]
+
+_DefaultT = NewType("_DefaultT", SentinelType)
+Default = _DefaultT(SentinelType())  # noqa
 
 
 class StreamGrouper(Generic[_T, _KeyT], Mapping[_KeyT, Stream[_T]]):
@@ -41,25 +56,9 @@ class StreamGrouper(Generic[_T, _KeyT], Mapping[_KeyT, Stream[_T]]):
 
         return cast(Callable[_P, _U], wrapped)
 
-    @overload
-    def __init__(
-        self,
-        grouping_function: _GroupingFunctionT[_T, Coro[_KeyT]],
-        group_stream: AsyncIterable[_T],
-    ) -> None:
-        ...
-
-    @overload
     def __init__(
         self,
         grouping_function: _GroupingFunctionT[_T, _KeyT],
-        group_stream: AsyncIterable[_T],
-    ) -> None:
-        ...
-
-    def __init__(
-        self,
-        grouping_function: _GroupingFunctionT[_T, _KeyT] | _GroupingFunctionT[_T, Coro[_KeyT]],
         group_stream: AsyncIterable[_T],
     ) -> None:
         self._grouping_function = ensure_coro_fn(grouping_function)
@@ -69,27 +68,10 @@ class StreamGrouper(Generic[_T, _KeyT], Mapping[_KeyT, Stream[_T]]):
         self._key_streams: defaultdict[_KeyT, Future[Stream[_T]]]
         self._key_streams = defaultdict(create_future)
 
-        # self._key_exists: defaultdict[_KeyT, Future[None]]
-        # self._key_exists = defaultdict(lambda: asyncio.get_running_loop().create_future())
-
         self._new_key_queue: CloseableQueue[_KeyT] = CloseableQueue()
         self._akeys_stream = None
 
         self._grouping_task = None
-
-    # async def _aiter_for_key(self, key: _KeyT) -> AsyncIterator[_T]:
-    #     """Returns an async iterator for the given key.
-    #
-    #     That is, this function returns an async iterator that yields items from the queue
-    #     for which the grouping function returned the given key.
-    #     """
-    #     print("aiter_for_key", key)
-    #     if not (key_exists_fut := self._key_exists[key]).done():
-    #         await key_exists_fut
-    #
-    #     print("aiter_for_key", key, "exists")
-    #     async for it in self._key_queues[key]:
-    #         yield it
 
     async def _consume_source(self) -> None:
         """Consumes the source stream and groups the items into the appropriate queues.
@@ -111,8 +93,6 @@ class StreamGrouper(Generic[_T, _KeyT], Mapping[_KeyT, Stream[_T]]):
         for key in self._key_queues:
             self._key_queues[key].close()
         self._new_key_queue.close()
-
-        # await asyncio.gather(*(q.wait_exhausted() for q in self._key_queues.values()))
 
     def _create_group(self, key: _KeyT) -> None:
         """Creates the queue and stream for a given key."""
@@ -158,42 +138,211 @@ class StreamGrouper(Generic[_T, _KeyT], Mapping[_KeyT, Stream[_T]]):
         return iter(self._key_queues)
 
 
-async def agroup_map(
-    grouping_function: _GroupingFunctionT[_T, _KeyT] | _GroupingFunctionT[_T, Coro[_KeyT]],
+def _agroup_map(
+    grouping_function: _GroupingFunctionT[_T, _KeyT],
     group_stream: AsyncIterable[_T],
-    mapping_functions: dict[_KeyT, Callable[[_T], _U]],
-) -> StreamGrouper[_T, _KeyT]:
-    """Groups items from a stream according to a grouping function, then maps each group
-    using a mapping function.
-
-    The mapping functions are called with the items from the group stream as they are
-    received, and the results are yielded as they are produced.
-
-    The mapping functions are called in the order in which the groups are created.
+    mapping_functions: Mapping[_KeyT | _DefaultT, UnaryFn[_T, _U]],
+) -> Stream[_U]:
     """
+    Groups items from the given stream according to the given grouping function, and applies
+    the given mapping functions to the groups.
 
-    grouping_function_async = ensure_coro_fn(grouping_function)
+    If Default is used as a key, the corresponding mapping function will be applied to all
+    items that do not match any other key. If Default is not used, items that do not match
+    any key will be discarded.
 
-    def _default() -> Future[CloseableQueue[_T]]:
-        fut = asyncio.Future[CloseableQueue[_T]]()
-        return fut
+    Args:
+        grouping_function:
+        group_stream:
+        mapping_functions:
 
-    queues: defaultdict[_KeyT, Future[CloseableQueue[_T]]] = defaultdict(_default)
+    Returns:
 
-    async def _group_stream(key: _KeyT) -> AsyncIterator[_U]:
-        q = await queues[key]
-        map_fn = ensure_coro_fn(mapping_functions[key])
-        async for it in q:
-            yield await map_fn(it)
+    """
+    grouper = StreamGrouper(grouping_function, group_stream)
+    output_queue = CloseableQueue[_U]()
 
-    async for item in group_stream:
-        key = await grouping_function_async(item)
-        fut = queues[key]
-        if not fut.done():
-            fut.set_result(CloseableQueue())
-        await fut.result().put(item)
+    async def output_queue_filler(fill_key: _KeyT) -> None:
+        _fn = mapping_functions.get(fill_key, mapping_functions.get(Default))
+        _key_stream = grouper.get_wait(fill_key)
 
-        yield mapping_functions[key](item)
+        if _fn is None:
+            async for _ in _key_stream:
+                pass
+        else:
+            _fn_async = ensure_coro_fn(_fn)
+            async for it in _key_stream:
+                mapped = await _fn_async(it)
+                await output_queue.put(mapped)
+
+    async def key_inserter() -> None:
+        tasks = set()
+        async for key in grouper.akeys():
+            tasks.add(asyncio.create_task(output_queue_filler(key)))
+        await asyncio.gather(*tasks)
+        output_queue.close()
+
+    asyncio.create_task(key_inserter())
+    return Stream(aiter(output_queue))
 
 
-__all__ = ("StreamGrouper",)
+def _apredicate_map(
+    stream: AsyncIterable[_T],
+    predicates_maps: Mapping[UnaryFn[_T, bool] | _DefaultT, UnaryFn[_T, _U]],
+) -> Stream[_U]:
+    """Maps items in a stream to a new value if the predicate returns True.
+
+    Args:
+        predicate: A function that takes an item from the stream and returns a boolean
+            indicating whether the item should be mapped.
+        stream: The stream to map.
+        predicates_maps: A function that takes an item from the stream and returns a new value
+            for that item. If the predicate returns False for an item, the item is not mapped.
+
+    Returns:
+        A stream that yields the mapped items.
+    """
+    output_queue = CloseableQueue[_U]()
+
+    async_predicate_map = dict[
+        SentinelType | Callable[[_T], Coro[bool]],
+        Callable[[_T], Coro[_U]],
+    ]()
+
+    for pred, mapping_function in predicates_maps.items():
+        if isinstance(pred, SentinelType):
+            if pred is not Default:
+                raise ValueError(f"Invalid sentinel value {pred!r} for predicate.")
+            async_predicate_map[Default] = ensure_coro_fn(mapping_function)
+        else:
+            _pred = ensure_coro_fn(pred)
+            async_predicate_map[_pred] = ensure_coro_fn(mapping_function)
+
+    async def _predicate_checker(item: _T) -> None:
+        for predicate, fn in async_predicate_map.items():
+            if isinstance(pred_fn := predicate, SentinelType):
+                predicate_true = True  # Default predicate always matches
+            else:
+                predicate_true = await pred_fn(item)
+
+            if predicate_true:
+                await output_queue.put(await fn(item))
+                break
+
+    async def output_queue_filler() -> None:
+        tasks = set()
+        async for item in stream:
+            tasks.add(asyncio.create_task(_predicate_checker(item)))
+        await asyncio.gather(*tasks)
+        await output_queue.join()
+        output_queue.close()
+
+    asyncio.create_task(output_queue_filler())
+    return Stream(output_queue)
+
+
+def apredicate_map(
+    mapping_functions: Mapping[UnaryFn[_T, bool] | _DefaultT, UnaryFn[_T, _U]]
+) -> WithStream[_T, _U]:
+    @functools.wraps(_apredicate_map)
+    def _partial(stream: AsyncIterable[_T]) -> Stream[_U]:
+        return _apredicate_map(stream, mapping_functions)
+
+    setattr(_partial, "__with_stream__", _partial)  # See: WithStream protocol
+    return cast(WithStream[_T, _U], _partial)
+
+
+def agroup_map(
+    grouping_function: _GroupingFunctionT[_T, _KeyT],
+    mapping_functions: Mapping[_KeyT | _DefaultT, UnaryFn[_T, _U]],
+) -> WithStream[_T, _U]:
+    @functools.wraps(_agroup_map)
+    def _partial(stream: AsyncIterable[_T]) -> Stream[_U]:
+        return _agroup_map(grouping_function, stream, mapping_functions)
+
+    setattr(_partial, "__with_stream__", _partial)  # See: WithStream protocol
+    return cast(WithStream[_T, _U], _partial)
+
+
+if __name__ == "__main__":
+
+    def mod_three(x: int) -> int:
+        return x % 3
+
+    def is_mod_three(x: int) -> bool:
+        return x % 3 == 0
+
+    def to_streeeng(x: int) -> str:
+        return str(x)
+
+    def to_streeeeeeeeeeng(x: int) -> str:
+        return str(x) * 10
+
+    async def main() -> None:
+        # s = agroup_map(
+        #     mod_three,
+        #     arange(100),
+        #     {0: to_streeeng, 1: to_streeeeeeeeeeng, Default: to_streeeng},
+        # )
+        #
+        # async for item in s:
+        #     print(item)
+        #     # reveal_type(item)
+        #
+        # s_verify = apredicate_map(
+        #     arange(100),
+        #     {
+        #         (lambda x: x % 3): (lambda x: f"boo! divisor! {x}"),
+        #         (lambda x: x % 3 == 1): to_streeeng,
+        #         Default: (lambda x: f"{x} is k."),
+        #     },
+        # )
+
+        async def rev_strin(x: str) -> str:
+            return x[::-1]
+
+        def first_character(x: str) -> str:
+            return x[0]
+
+        def say_dot(x: str) -> str:
+            return f"dot! {x}"
+
+        def say_dah(x: str) -> str:
+            return f"dah! {x}"
+
+        s_verify = (
+            await (
+                amerge(arange_delayed(100), arange_delayed(100, 200))
+                / apredicate_map(
+                    {
+                        is_mod_three: to_streeeng,
+                        Default: to_streeeeeeeeeeng,
+                    },
+                )
+                / rev_strin
+                / agroup_map(
+                    first_character,
+                    {
+                        ".": say_dot,
+                        Default: say_dah,
+                    },
+                )
+                / F(str.split)(sep="1")
+            )
+            .aflatmap(lambda x: x)
+            .amap(print)
+            .run()
+        )
+
+        # async for item in s_verify:
+        #     print(item)
+        # async for itt in s_verify:
+        #     print(itt)
+        #     # reveal_type(itt)
+
+    asyncio.run(main())
+
+__all__ = (
+    "StreamGrouper",
+    "_agroup_map",
+)

@@ -26,6 +26,7 @@ from typing import (
     TypeAlias,
     TypeVar,
     Union,
+    runtime_checkable,
 )
 
 from astream.closeable_queue import CloseableQueue, QueueExhausted
@@ -33,6 +34,7 @@ from astream.utils import ensure_async_iterator, ensure_coro_fn
 
 _NextT = TypeVar("_NextT")
 _T = TypeVar("_T")
+_U = TypeVar("_U")
 
 _T_co = TypeVar("_T_co", covariant=True)
 
@@ -45,6 +47,12 @@ class IsIterable(Protocol[_T_co]):
     """A protocol for objects that can be converted to an async iterable."""
 
     def __iter__(self) -> Iterator[_T_co]:
+        ...
+
+
+@runtime_checkable
+class WithStream(Protocol[_T, _U]):
+    def __with_stream__(self, stream: Stream[_T]) -> Stream[_U]:
         ...
 
 
@@ -144,6 +152,11 @@ class Stream(AsyncIterator[_T]):
     async def gather(self) -> list[_T]:
         return [it async for it in self]
 
+    async def run(self) -> None:
+        """Run the stream to completion, discarding all items."""
+        async for _ in self:
+            pass
+
     @overload
     async def acollect(self, fn: Callable[[Sequence[_T]], Coro[_NextT]]) -> _NextT:
         ...
@@ -225,8 +238,17 @@ class Stream(AsyncIterator[_T]):
             raise StopAsyncIteration
 
     # todo - replace FunctionType in overloads for more generic
+
     @overload
-    def __truediv__(self, other: FunctionType) -> Stream[_NextT]:
+    def __truediv__(self, other: WithStream[_T, _U]) -> Stream[_U]:
+        ...
+
+    @overload
+    def __truediv__(self, other: Callable[[_T], Coro[_U]]) -> Stream[_U]:
+        ...
+
+    @overload
+    def __truediv__(self, other: Callable[[_T], _U]) -> Stream[_U]:
         ...
 
     @overload
@@ -234,6 +256,9 @@ class Stream(AsyncIterator[_T]):
         ...
 
     def __truediv__(self, other: Any) -> Stream[_NextT] | NotImplementedType:
+        # todo++ - set up interaction with WithStream for aflatmap and afilter
+        if isinstance(other, WithStream):
+            return other.__with_stream__(self)
         if isinstance(other, FnT) or isinstance(other, partial):
             return self.amap(other)
         return NotImplemented
