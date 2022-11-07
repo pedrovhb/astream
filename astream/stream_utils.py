@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import functools
 from abc import abstractmethod
+from datetime import timedelta
 from typing import (
     Any,
     AsyncIterable,
@@ -17,7 +18,6 @@ from typing import (
     TypeVar,
     overload,
 )
-
 
 from astream.stream import Stream
 from astream.utils import SentinelType, ensure_async_iterator, ensure_coro_fn, NoValueSentinel
@@ -128,42 +128,22 @@ def aflatmap(
     return Stream(iterable).aflatmap(fn)
 
 
-# @stream
-# def arange(start: int, stop: int | None = None, step: int = 1) -> Iterator[int]:
-#     """An asynchronous version of `range`.
-#
-#     Args:
-#         start: The start of the range.
-#         stop: The end of the range.
-#         step: The step of the range.
-#
-#     Yields:
-#         The next item in the range.
-#
-#     Examples:
-#         >>> async def demo_arange():
-#         ...     async for i in arange(5):
-#         ...         print(i)
-#         >>> asyncio.run(demo_arange())
-#         0
-#         1
-#         2
-#         3
-#         4
-#     """
-#     import time
-#
-#     if stop is None:
-#         stop = start
-#         start = 0
-#     for i in range(start, stop, step):
-#         time.sleep(1)
-#         yield i
-#         print(f"yielded {i}")
-#     print("done")
-
-
 arange = stream(range)
+
+
+@stream
+async def arange_delayed(
+    start: int,
+    stop: int | None = None,
+    step: int = 1,
+    delay: timedelta = timedelta(seconds=0.2),
+) -> AsyncIterator[int]:
+    if stop is None:
+        stop = start
+        start = 0
+    for i in range(start, stop, step):
+        yield i
+        await asyncio.sleep(delay.total_seconds())
 
 
 @stream

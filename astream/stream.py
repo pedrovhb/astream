@@ -2,6 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from functools import partial
+from types import (
+    FunctionType,
+    NotImplementedType,
+    BuiltinFunctionType,
+    LambdaType,
+    MethodType,
+    BuiltinMethodType,
+)
 from typing import (
     Any,
     AsyncIterable,
@@ -16,6 +25,7 @@ from typing import (
     Sequence,
     TypeAlias,
     TypeVar,
+    Union,
 )
 
 from astream.closeable_queue import CloseableQueue, QueueExhausted
@@ -27,6 +37,8 @@ _T = TypeVar("_T")
 _T_co = TypeVar("_T_co", covariant=True)
 
 Coro: TypeAlias = Coroutine[Any, Any, _T]
+
+FnT = (FunctionType, LambdaType, MethodType, BuiltinFunctionType, BuiltinMethodType)
 
 
 class IsIterable(Protocol[_T_co]):
@@ -132,9 +144,20 @@ class Stream(AsyncIterator[_T]):
     async def gather(self) -> list[_T]:
         return [it async for it in self]
 
+    @overload
     async def acollect(self, fn: Callable[[Sequence[_T]], Coro[_NextT]]) -> _NextT:
+        ...
+
+    @overload
+    async def acollect(self, fn: Callable[[Sequence[_T]], _NextT]) -> _NextT:
+        ...
+
+    async def acollect(
+        self, fn: Callable[[Sequence[_T]], Coro[_NextT]] | Callable[[Sequence[_T]], _NextT]
+    ) -> _NextT:
         # todo - take max_out_q_size into account, accept sync fn
-        return await fn([it async for it in self])
+        _async_fn = ensure_coro_fn(fn)
+        return await _async_fn([it async for it in self])
 
     @overload
     def amap(self, fn: Callable[[_T], Coro[_NextT]]) -> Stream[_NextT]:
@@ -186,11 +209,12 @@ class Stream(AsyncIterator[_T]):
         )
 
     def flatten(self: Stream[Iterable[_NextT]]) -> Stream[_NextT]:
-        return Stream(
-            _aflatmap(lambda x: x, self),
-            max_out_q_size=self._out_q.maxsize,
-            start=self._started.is_set(),
-        )
+        # return Stream(
+        #     _aflatmap(lambda x: x, self),
+        #     max_out_q_size=self._out_q.maxsize,
+        #     start=self._started.is_set(),
+        # )
+        return self.aflatmap(lambda x: x)  # todo - fix
 
     async def __anext__(self) -> _T:
         try:
@@ -200,13 +224,64 @@ class Stream(AsyncIterator[_T]):
         except QueueExhausted:
             raise StopAsyncIteration
 
-    __truediv__ = amap  # Stream(range(10)) / lambda x: x * 2  --> 0, 2, 4, 6, 8, ...
-    __floordiv__ = aflatmap  # Stream(range(10)) // lambda x: [x, x * 2]  --> 0, 0, 1, 2, 2, 4, ...
-    __mod__ = afilter  # Stream(range(10)) % lambda x: x % 2 == 0  --> 0, 2, 4, 6, 8, ...
-    __pos__ = flatten  # +Stream([[0, 1], [2, 3]]) --> 0, 1, 2, 3
-    __matmul__ = acollect  # Stream(range(10)) @ sum --> 45
+    # todo - replace FunctionType in overloads for more generic
+    @overload
+    def __truediv__(self, other: FunctionType) -> Stream[_NextT]:
+        ...
 
-    # todo - agather with @
+    @overload
+    def __truediv__(self, other: Any) -> Stream[_T] | NotImplementedType:
+        ...
+
+    def __truediv__(self, other: Any) -> Stream[_NextT] | NotImplementedType:
+        if isinstance(other, FnT) or isinstance(other, partial):
+            return self.amap(other)
+        return NotImplemented
+
+    @overload
+    def __floordiv__(self, other: FunctionType) -> Stream[_NextT]:
+        ...
+
+    @overload
+    def __floordiv__(self, other: Any) -> Stream[_T] | NotImplementedType:
+        ...
+
+    def __floordiv__(self, other: Any) -> Stream[_NextT] | NotImplementedType:
+        if isinstance(other, FnT):
+            return self.aflatmap(other)
+        return NotImplemented
+
+    @overload
+    def __mod__(self, other: FunctionType) -> Stream[_T]:
+        ...
+
+    @overload
+    def __mod__(self, other: Any) -> Stream[_T] | NotImplementedType:
+        ...
+
+    def __mod__(self, other: Any) -> Stream[_T] | NotImplementedType:
+        if isinstance(other, FnT):
+            return self.afilter(other)
+        return NotImplemented
+
+    @overload
+    def __matmul__(self, other: Callable[[Sequence[_T]], Coro[_NextT]]) -> Coro[_NextT]:
+        ...
+
+    @overload
+    def __matmul__(self, other: Callable[[Sequence[_T]], _NextT]) -> Coro[_NextT]:
+        ...
+
+    @overload
+    def __matmul__(self, other: Any) -> Coro[_NextT] | NotImplementedType:
+        ...
+
+    def __matmul__(self, other: Any) -> Coro[_NextT] | NotImplementedType:
+        if isinstance(other, FnT):
+            return self.acollect(other)
+        return NotImplemented
+
+    __pos__ = flatten  # +Stream([[0, 1], [2, 3]]) --> 0, 1, 2, 3
 
 
 __all__ = ("Stream",)

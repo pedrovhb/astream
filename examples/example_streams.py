@@ -3,7 +3,11 @@ from __future__ import annotations
 import random
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from astream import stream
+from functools import partial
+from types import FunctionType
+from typing import Callable, Generic, TypeVar, ParamSpec, Iterable
+
+from astream import stream, arange, It, Stream
 
 
 @dataclass
@@ -58,4 +62,5 @@ async def main() -> None:
 if __name__ == "__main__":
     import asyncio
 
-    asyncio.run(main())
+    # asyncio.run(main())
+    asyncio.run(example_surrogate())
