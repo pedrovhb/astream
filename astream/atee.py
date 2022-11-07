@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from asyncio import Future
 from typing import AsyncIterable, AsyncIterator, Iterable, TypeAlias, TypeVar
 
@@ -83,34 +84,3 @@ class ClonableAsyncIterableWrapper(AsyncIterable[T]):
 
 
 __all__ = ("atee", "ClonableAsyncIterableWrapper")
-
-
-if __name__ == "__main__":
-    import asyncio
-
-    from astream.stream_utils import amerge, arange
-
-    async def main() -> None:
-        # async def source() -> AsyncIterator[int]:
-        #     for _ in range(10):
-        #         await asyncio.sleep(random.random() / 10)
-        #         yield random.randint(0, 100)
-        #
-        # a, b = tee_async_iterable(source(), 2)
-        # async for i in amerge(a, b):
-        #     print(i)
-
-        it = ClonableAsyncIterableWrapper(arange(50))
-        a = it.aclone()
-        b = it.aclone() / (lambda x: x * 2)
-
-        async for num in amerge(a, b, it):
-            print(num)
-
-    asyncio.run(main())
-
-"""
-The Python __index__ method is used to convert an object to an integer. 
-It is called when an object is used in a context where an integer is required, such as 
-when indexing a sequence or slicing a sequence.
-"""
