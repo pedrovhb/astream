@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 import functools
 from abc import abstractmethod
+from collections import deque
 from datetime import timedelta
+from itertools import chain
+from operator import getitem
 from typing import (
     Any,
     AsyncIterable,
@@ -276,6 +279,43 @@ async def areduce(
     async for item in _it_async:
         crt = await _fn_async(crt, item)
     return crt
+
+
+NoData = object()
+
+
+def dotget(path: str) -> Callable[[Any], Iterable[Any]]:
+    def _adotget(p: str, *objs: Any) -> Any:
+        if not p:
+            yield from objs
+
+        part, parts = p.split(".", maxsplit=1) if "." in p else (p, "")
+
+        matches = []
+        for obj in objs:
+
+            match obj:
+                case dict() if part in obj:
+                    matches.append(_adotget(parts, obj[part]))
+                case list() if part.isdigit() and int(part) < len(obj):
+                    matches.append(_adotget(parts, obj[int(part)]))
+                case dict() if part == "*":
+                    for v in obj.values():
+                        matches.append(_adotget(parts, v))
+                case list() if part == "*":
+                    for v in obj:
+                        matches.append(_adotget(parts, v))
+                case _ if (result := getattr(obj, part, NoData)) is not NoData:
+                    matches.append(_adotget(parts, result))
+                case _:
+                    pass
+
+        yield from chain.from_iterable(matches)
+
+    def _call(*objs: Any) -> Any:
+        return _adotget(path, *objs)
+
+    return _call
 
 
 __all__ = (

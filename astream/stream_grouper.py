@@ -158,4 +158,42 @@ class StreamGrouper(Generic[_T, _KeyT], Mapping[_KeyT, Stream[_T]]):
         return iter(self._key_queues)
 
 
+async def agroup_map(
+    grouping_function: _GroupingFunctionT[_T, _KeyT] | _GroupingFunctionT[_T, Coro[_KeyT]],
+    group_stream: AsyncIterable[_T],
+    mapping_functions: dict[_KeyT, Callable[[_T], _U]],
+) -> StreamGrouper[_T, _KeyT]:
+    """Groups items from a stream according to a grouping function, then maps each group
+    using a mapping function.
+
+    The mapping functions are called with the items from the group stream as they are
+    received, and the results are yielded as they are produced.
+
+    The mapping functions are called in the order in which the groups are created.
+    """
+
+    grouping_function_async = ensure_coro_fn(grouping_function)
+
+    def _default() -> Future[CloseableQueue[_T]]:
+        fut = asyncio.Future[CloseableQueue[_T]]()
+        return fut
+
+    queues: defaultdict[_KeyT, Future[CloseableQueue[_T]]] = defaultdict(_default)
+
+    async def _group_stream(key: _KeyT) -> AsyncIterator[_U]:
+        q = await queues[key]
+        map_fn = ensure_coro_fn(mapping_functions[key])
+        async for it in q:
+            yield await map_fn(it)
+
+    async for item in group_stream:
+        key = await grouping_function_async(item)
+        fut = queues[key]
+        if not fut.done():
+            fut.set_result(CloseableQueue())
+        await fut.result().put(item)
+
+        yield mapping_functions[key](item)
+
+
 __all__ = ("StreamGrouper",)
