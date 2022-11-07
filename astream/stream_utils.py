@@ -330,4 +330,5 @@ __all__ = (
     "amerge",
     "ascan",
     "areduce",
+    "dotget",
 )
