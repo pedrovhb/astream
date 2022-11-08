@@ -1,15 +1,30 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
-from typing import TypeVar, Iterable, AsyncIterable
+import random
+import statistics
+from collections import deque
+from datetime import datetime, timedelta
+from functools import partial
+from itertools import pairwise
+from typing import TypeVar, Iterable, AsyncIterable, Callable, Generic
 
 from rich.segment import Segment
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 
-from astream import Stream, NoValueSentinel, SentinelType, arange
-from astream.stream_utils import arange_delayed
+from astream import Stream, NoValueSentinel, SentinelType, arange, iter_to_aiter
+from astream.stream_grouper import agroup_map
+from astream.stream_utils import arange_delayed, amerge, aenumerate
+from humanize import naturaldelta, precisedelta
+
+try:
+    import uvloop
+
+    uvloop.install()
+    print("Using uvloop")
+except ImportError:
+    print("Using asyncio")
 
 _T = TypeVar("_T")
 
@@ -41,15 +56,94 @@ class RichStream(Stream[_T]):
         yield f" (at {self._yielded_timestamps[-1].ctime()})" if self._yielded_timestamps else ""
 
 
+class StatsInstrumenter(Generic[_T]):
+
+    _latest_value: SentinelType | _T = NoValueSentinel
+    _yielded_timestamps: list[datetime]
+
+    def __init__(self) -> None:
+        self._yielded_timestamps = deque()
+
+    def register_item(self, item: _T) -> None:
+        self._latest_value = item
+        self._yielded_timestamps.append(datetime.now())
+        asyncio.get_event_loop().call_later(1, self._yielded_timestamps.popleft)
+
+    # @property
+    # def values_per_second(self) -> float:
+    #     if len(self._yielded_timestamps) < 2:
+    #         return 0.0
+    #     now = datetime.now()
+    #     ts_in_last_sec = sum((now - ts).total_seconds() for ts in self._yielded_timestamps) / len(
+    #         self._yielded_timestamps
+    #     )
+    #     return ts_in_last_sec
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        yield Segment(f"Latest value: ")
+        yield str(self._latest_value).strip()
+        last = self._yielded_timestamps[-1] - datetime.now() if self._yielded_timestamps else None
+        yield f" ({self.values_per_second:.1f}/s)" if last is not None else ""
+
+
+def instrumenter(si: StatsInstrumenter[_T]) -> Callable[[_T], _T]:
+    def _instrumenter(item: _T) -> _T:
+        si.register_item(item)
+        return item
+
+    return _instrumenter
+
+
 if __name__ == "__main__":
 
     async def main() -> None:
 
         console = Console()
-        st = RichStream(arange_delayed(100))
+        # st = RichStream(arange_delayed(100))
+        si = StatsInstrumenter[int]()
 
-        with Live(st, console=console) as live:
-            async for item in st:
-                pass
+        async def rand() -> Iterable[tuple[float, float]]:
+            while True:
+                yield random.uniform(-1, 1), random.uniform(-1, 1)
+                await asyncio.sleep(0)
+
+        async def is_in_circle(xy: tuple[float, float]) -> bool:
+            x, y = xy
+            return x**2 + y**2 < 1
+
+        total = 0
+        dentro = 0
+
+        async def contar_in_circle(total_dentro) -> float:
+            nonlocal total, dentro
+            novo_total, novo_dentro = total_dentro
+            total += novo_total
+            dentro += novo_dentro
+            return 4.0 * dentro / total
+
+        # with Live(si, console=console, refresh_per_second=4) as live:
+        st = (
+            Stream(rand())
+            / agroup_map(
+                is_in_circle,
+                {
+                    True: lambda x: (1, 1),
+                    False: lambda x: (1, 0),
+                },
+            )
+            / contar_in_circle
+        )
+        start = datetime.now()
+        async for i, item in aenumerate(st):
+            if i % 10000 == 0:
+                console.print(f"pi = {item:.12f} (after {i} iterations)")
+                per_iter_dt = (datetime.now() - start) / (i or 1)
+                per_iter = precisedelta(per_iter_dt, minimum_unit="microseconds")
+                per_second = i / (datetime.now() - start).total_seconds()
+                console.print(
+                    f"Elapsed: {naturaldelta(datetime.now() - start)} "
+                    f"(per iteration: {per_iter}, "
+                    f"iterations per second: {per_second})"
+                )
 
     asyncio.run(main())
