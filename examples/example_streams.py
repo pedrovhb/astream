@@ -98,8 +98,18 @@ async def adot() -> None:
         print(data)
 
 
+async def aflatten() -> None:
+    def tolist(it: int) -> list[int]:
+        return list(range(it))
+
+    s = arange(10) / F(tolist)
+    reveal_type(s)
+    ss = +s
+    reveal_type(ss)
+
+
 if __name__ == "__main__":
     import asyncio
 
-    asyncio.run(adot())
+    asyncio.run(aflatten())
     # asyncio.run())

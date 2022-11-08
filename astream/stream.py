@@ -27,6 +27,7 @@ from typing import (
     TypeVar,
     Union,
     runtime_checkable,
+    TYPE_CHECKING,
 )
 
 from astream.closeable_queue import CloseableQueue, QueueExhausted
@@ -39,8 +40,20 @@ _U = TypeVar("_U")
 _T_co = TypeVar("_T_co", covariant=True)
 
 Coro: TypeAlias = Coroutine[Any, Any, _T]
+UnaryFn: TypeAlias = Callable[[_T], _U]
 
 FnT = (FunctionType, LambdaType, MethodType, BuiltinFunctionType, BuiltinMethodType)
+
+_AsyncIterableT = TypeVar("_AsyncIterableT", bound=AsyncIterable[Any])
+_IterableT = TypeVar("_IterableT", bound=Iterable[Any])
+
+_AnyIterableT = TypeVar("_AnyIterableT", bound=Iterable[Any] | AsyncIterable[Any])
+
+if TYPE_CHECKING:
+    _FlatteningFn: TypeAlias = Union[
+        Callable[[Stream[_AnyIterableT[_T]]], Iterable[_U]],
+        Callable[[Stream[_AnyIterableT[_T]]], AsyncIterable[_U]],
+    ]
 
 
 class IsIterable(Protocol[_T_co]):
@@ -51,20 +64,37 @@ class IsIterable(Protocol[_T_co]):
 
 
 @runtime_checkable
-class WithStream(Protocol[_T, _U]):
-    def __with_stream__(self, stream: Stream[_T]) -> Stream[_U]:
+class StreamMapper(Protocol[_T, _U]):
+    def __stream_map__(self, stream: Stream[_T]) -> Stream[_U]:
         ...
 
 
-async def _identity(x: _T) -> _T:
-    return x
+@runtime_checkable
+class StreamFilterer(Protocol[_T]):
+    def __stream_filter__(self, stream: Stream[_T]) -> Stream[_U]:
+        ...
 
 
-async def _flatten(iterable: AsyncIterable[Iterable[_T]]) -> AsyncIterator[_T]:
-    """Flatten an async iterable of async iterables."""
-    async for it in iterable:
-        for item in it:
-            yield item
+@runtime_checkable
+class StreamCollector(Protocol[_T, _T_co]):
+    def __stream_collect__(self, stream: Stream[_T]) -> Coro[_T_co]:
+        ...
+
+
+@runtime_checkable
+class StreamFlatMapper(Protocol[_AnyIterableT, _U]):
+    def __stream_flatmap__(self, stream: Stream[_AnyIterableT]) -> Stream[_U]:
+        ...
+
+
+async def _flatten(item: Stream[_AnyIterableT]) -> AsyncIterator[_T]:
+    if inspect.isasyncgen(item):
+        async for subitem in item:
+            yield subitem
+    else:
+        item_ = cast(Iterable[_T], item)
+        for subitem in item_:
+            yield subitem
 
 
 async def _amap(
@@ -89,24 +119,25 @@ async def _afilter(
 
 
 async def _aflatmap(
-    fn: Callable[[_T], Iterable[_NextT]]
-    | Callable[[_T], Coro[Iterable[_NextT]]]
-    | Callable[[_T], AsyncIterable[_NextT]],
-    iterable: AsyncIterable[_T],
+    fn: _FlatteningFn[_T, _U],
+    iterable: AsyncIterable[Iterable[_T] | AsyncIterable[_T]],
 ) -> AsyncIterator[_NextT]:
     """An asynchronous version of `flatmap`."""
 
     # If the function is an async generator, yield from it.
     if inspect.isasyncgenfunction(fn):
-        _async_gen = cast(Callable[[_T], AsyncIterable[_NextT]], fn)
+        _async_gen = cast(Callable[[Iterable[_T] | AsyncIterable[_T]], AsyncIterable[_NextT]], fn)
         async for item in iterable:
             async for subitem in _async_gen(item):
                 yield subitem
 
     # If it returns an iterable, we flatten it
     else:
-        _coro = ensure_coro_fn(fn)
-        _async_fn = cast(Callable[[_T], Coro[Iterable[_NextT]]], _coro)
+        _fn = cast(Callable[[Iterable[_T] | AsyncIterable[_T]], Iterable[_NextT]], fn)
+        _coro = ensure_coro_fn(_fn)
+        _async_fn = cast(
+            Callable[[Iterable[_T] | AsyncIterable[_T]], Coro[Iterable[_NextT]]], _coro
+        )
         async for item in iterable:
             for subitem in await _async_fn(item):
                 yield subitem
@@ -202,32 +233,49 @@ class Stream(AsyncIterator[_T]):
             start=self._started.is_set(),
         )
 
-    @overload
-    def aflatmap(self, fn: Callable[[_T], Coro[Iterable[_NextT]]]) -> Stream[_NextT]:
-        ...
+    #
+    # @overload
+    # def aflatmap(
+    #     self: Stream[_T],
+    #     fn: _FlatteningFn[_T, _U],
+    # ) -> Stream[_U]:
+    #     ...
 
-    @overload
-    def aflatmap(self, fn: Callable[[_T], AsyncIterable[_NextT]]) -> Stream[_NextT]:
-        ...
+    # @overload
+    # def aflatmap(
+    #     self: Stream[_T],
+    #     fn: Callable[[Iterable[_T] | AsyncIterable[_T]], AsyncIterable[_U]],
+    # ) -> Stream[_U]:
+    #     ...
 
-    @overload
-    def aflatmap(self, fn: Callable[[_T], Iterable[_NextT]]) -> Stream[_NextT]:
-        ...
+    # @overload
+    # def aflatmap(
+    #     self: Stream[_T],
+    #     fn: _FlatteningFn[_T, _U],
+    # ) -> Stream[_U]:
+    #     ...
 
-    def aflatmap(self, fn: Any) -> Stream[_NextT]:
+    def aflatmap(
+        self: Stream[Iterable[_U]] | Stream[AsyncIterable[_U]],
+        fn: _FlatteningFn[_U, _NextT],
+    ) -> Stream[_NextT]:
         return Stream(
             _aflatmap(fn, self),
             max_out_q_size=self._out_q.maxsize,
             start=self._started.is_set(),
         )
 
-    def flatten(self: Stream[Iterable[_NextT]]) -> Stream[_NextT]:
-        # return Stream(
-        #     _aflatmap(lambda x: x, self),
-        #     max_out_q_size=self._out_q.maxsize,
-        #     start=self._started.is_set(),
-        # )
-        return self.aflatmap(lambda x: x)  # todo - fix
+    @overload
+    def flatten(self: Stream[Iterable[_U]]) -> Stream[_U]:
+        ...
+
+    @overload
+    def flatten(self: Stream[AsyncIterable[_U]]) -> Stream[_U]:
+        ...
+
+    def flatten(self: Stream[Iterable[_U]] | Stream[AsyncIterable[_U]]) -> Stream[_U]:
+        # self_ = cast(Stream[Iterable[_T] | AsyncIterable[_T]], self)
+        return self.aflatmap(_flatten)
 
     async def __anext__(self) -> _T:
         try:
@@ -240,7 +288,7 @@ class Stream(AsyncIterator[_T]):
     # todo - replace FunctionType in overloads for more generic
 
     @overload
-    def __truediv__(self, other: WithStream[_T, _U]) -> Stream[_U]:
+    def __truediv__(self, other: StreamMapper[_T, _U]) -> Stream[_U]:
         ...
 
     @overload
@@ -257,24 +305,15 @@ class Stream(AsyncIterator[_T]):
 
     def __truediv__(self, other: Any) -> Stream[_NextT] | NotImplementedType:
         # todo++ - set up interaction with WithStream for aflatmap and afilter
-        if isinstance(other, WithStream):
-            return other.__with_stream__(self)
+        if isinstance(other, StreamMapper):
+            return other.__stream_map__(self)
         if isinstance(other, FnT) or isinstance(other, partial):
             return self.amap(other)
         return NotImplemented
 
     @overload
-    def __floordiv__(self, other: FunctionType) -> Stream[_NextT]:
+    def __mod__(self, other: StreamFilterer[_T]) -> Stream[_T]:
         ...
-
-    @overload
-    def __floordiv__(self, other: Any) -> Stream[_T] | NotImplementedType:
-        ...
-
-    def __floordiv__(self, other: Any) -> Stream[_NextT] | NotImplementedType:
-        if isinstance(other, FnT):
-            return self.aflatmap(other)
-        return NotImplemented
 
     @overload
     def __mod__(self, other: FunctionType) -> Stream[_T]:
@@ -285,9 +324,37 @@ class Stream(AsyncIterator[_T]):
         ...
 
     def __mod__(self, other: Any) -> Stream[_T] | NotImplementedType:
+        if isinstance(other, StreamFilterer):
+            return other.__stream_filter__(self)
         if isinstance(other, FnT):
             return self.afilter(other)
         return NotImplemented
+
+    @overload
+    def __floordiv__(self: Stream[_T], other: StreamFlatMapper[_AnyIterableT, _U]) -> Stream[_U]:
+        ...
+
+    @overload
+    def __floordiv__(self: Stream[_T], other: _FlatteningFn[_T, _U]) -> Stream[_U]:
+        ...
+
+    @overload
+    def __floordiv__(self: Stream[_T], other: Any) -> Stream[_U] | NotImplementedType:
+        ...
+
+    def __floordiv__(
+        self: Stream[_T],
+        other: Any,
+    ) -> Stream[_U] | NotImplementedType:
+        if isinstance(other, StreamFlatMapper):
+            return other.__stream_flatmap__(self)
+        if isinstance(other, FnT):
+            return self.aflatmap(other)
+        return NotImplemented
+
+    @overload
+    def __matmul__(self, other: StreamCollector[_T_co, _U]) -> _U:
+        ...
 
     @overload
     def __matmul__(self, other: Callable[[Sequence[_T]], Coro[_NextT]]) -> Coro[_NextT]:
@@ -301,12 +368,23 @@ class Stream(AsyncIterator[_T]):
     def __matmul__(self, other: Any) -> Coro[_NextT] | NotImplementedType:
         ...
 
-    def __matmul__(self, other: Any) -> Coro[_NextT] | NotImplementedType:
+    def __matmul__(self, other: Any) -> Coro[_NextT] | NotImplementedType | _U:
+        if isinstance(other, StreamCollector):
+            return other.__stream_collect__(self)
         if isinstance(other, FnT):
             return self.acollect(other)
         return NotImplemented
 
-    __pos__ = flatten  # +Stream([[0, 1], [2, 3]]) --> 0, 1, 2, 3
+    @overload
+    def __pos__(self: Stream[Iterable[_U]]) -> Stream[_U]:
+        ...
+
+    @overload
+    def __pos__(self: Stream[AsyncIterable[_U]]) -> Stream[_U]:
+        ...
+
+    def __pos__(self: Stream[AsyncIterable[_U]] | Stream[Iterable[_U]]) -> Stream[_U]:
+        return self.flatten()  # +Stream([[0, 1], [2, 3]]) --> 0, 1, 2, 3
 
 
 __all__ = ("Stream",)

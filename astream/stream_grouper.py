@@ -10,7 +10,7 @@ from typing import *
 from astream import arange
 from astream.closeable_queue import CloseableQueue
 from astream.experimental.partializer import F
-from astream.stream import Stream, WithStream
+from astream.stream import Stream
 from astream.stream_utils import arange_delayed, amerge
 from astream.utils import (
     create_future,
