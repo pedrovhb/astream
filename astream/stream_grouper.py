@@ -10,14 +10,12 @@ from typing import *
 from astream import arange
 from astream.closeable_queue import CloseableQueue
 from astream.experimental.partializer import F
-from astream.stream import Stream
+from astream.protocols.type_aliases import SentinelType
+from astream.stream import Stream, StreamMapper
 from astream.stream_utils import arange_delayed, amerge
 from astream.utils import (
     create_future,
     ensure_coro_fn,
-    SentinelType,
-    NoValueSentinel,
-    _NoValueSentinelT,
 )
 
 _T = TypeVar("_T")
@@ -189,6 +187,7 @@ def _agroup_map(
 def _apredicate_map(
     stream: AsyncIterable[_T],
     predicates_maps: Mapping[UnaryFn[_T, bool] | _DefaultT, UnaryFn[_T, _U]],
+    stop_after_first_match: bool,
 ) -> Stream[_U]:
     """Maps items in a stream to a new value if the predicate returns True.
 
@@ -219,15 +218,22 @@ def _apredicate_map(
             async_predicate_map[_pred] = ensure_coro_fn(mapping_function)
 
     async def _predicate_checker(item: _T) -> None:
+        predicates_matched = []
         for predicate, fn in async_predicate_map.items():
             if isinstance(pred_fn := predicate, SentinelType):
                 predicate_true = True  # Default predicate always matches
             else:
                 predicate_true = await pred_fn(item)
-
             if predicate_true:
-                await output_queue.put(await fn(item))
-                break
+                # await output_queue.put(await fn(item))
+                predicates_matched.append(fn)
+                if stop_after_first_match:
+                    break
+        if predicates_matched:
+            for fn in predicates_matched:
+                item = await fn(item)
+
+            await output_queue.put(item)
 
     async def output_queue_filler() -> None:
         tasks = set()
@@ -242,26 +248,38 @@ def _apredicate_map(
 
 
 def apredicate_map(
-    mapping_functions: Mapping[UnaryFn[_T, bool] | _DefaultT, UnaryFn[_T, _U]]
-) -> WithStream[_T, _U]:
+    mapping_functions: Mapping[UnaryFn[_T, bool] | _DefaultT, UnaryFn[_T, _U]],
+) -> StreamMapper[_T, _U]:
     @functools.wraps(_apredicate_map)
     def _partial(stream: AsyncIterable[_T]) -> Stream[_U]:
-        return _apredicate_map(stream, mapping_functions)
+        return _apredicate_map(stream, mapping_functions, stop_after_first_match=False)
 
-    setattr(_partial, "__with_stream__", _partial)  # See: WithStream protocol
-    return cast(WithStream[_T, _U], _partial)
+    setattr(_partial, "__stream_map__", _partial)  # See: WithStream protocol
+    return cast(StreamMapper[_T, _U], _partial)
+
+
+def apredicate_match_map(
+    mapping_functions: Mapping[UnaryFn[_T, bool] | _DefaultT, UnaryFn[_T, _U]]
+) -> StreamMapper[_T, _U]:
+    @functools.wraps(_apredicate_map)
+    def _partial(stream: AsyncIterable[_T]) -> Stream[_U]:
+        return _apredicate_map(stream, mapping_functions, stop_after_first_match=True)
+
+    setattr(_partial, "__stream_map__", _partial)  # See: WithStream protocol
+    return cast(StreamMapper[_T, _U], _partial)
 
 
 def agroup_map(
     grouping_function: _GroupingFunctionT[_T, _KeyT],
     mapping_functions: Mapping[_KeyT | _DefaultT, UnaryFn[_T, _U]],
-) -> WithStream[_T, _U]:
+) -> StreamMapper[_T, _U]:
     @functools.wraps(_agroup_map)
     def _partial(stream: AsyncIterable[_T]) -> Stream[_U]:
         return _agroup_map(grouping_function, stream, mapping_functions)
 
-    setattr(_partial, "__with_stream__", _partial)  # See: WithStream protocol
-    return cast(WithStream[_T, _U], _partial)
+    setattr(_partial, "__stream_map__", _partial)  # See: StreamMapper protocol
+    # todo - use f instead?
+    return cast(StreamMapper[_T, _U], _partial)
 
 
 if __name__ == "__main__":
@@ -344,5 +362,7 @@ if __name__ == "__main__":
 
 __all__ = (
     "StreamGrouper",
-    "_agroup_map",
+    "agroup_map",
+    "apredicate_map",
+    "apredicate_match_map",
 )

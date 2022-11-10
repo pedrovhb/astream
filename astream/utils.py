@@ -6,20 +6,13 @@ from asyncio import Future
 from typing import *
 
 from astream.closeable_queue import CloseableQueue
-
-_P = ParamSpec("_P")
-_T = TypeVar("_T")
+from astream.protocols.type_aliases import P, CoroT, T, R
 
 
-class SentinelType:
-    pass
 
 
-_NoValueSentinelT = NewType("_NoValueSentinelT", SentinelType)
-NoValueSentinel = _NoValueSentinelT(SentinelType())  # noqa
 
-
-def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:
+def run_sync(f: Callable[P, Coroutine[Any, Any, T]]) -> Callable[P, T]:
     """Given a function, return a new function that runs the original one with asyncio.
 
     This can be used to transparently wrap asynchronous functions. It can be used for example to
@@ -33,17 +26,17 @@ def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:
     """
 
     @functools.wraps(f)
-    def decorated(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+    def decorated(*args: P.args, **kwargs: P.kwargs) -> T:
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(f(*args, **kwargs))
 
     return decorated
 
 
-def _iter_to_aiter_threaded(iterable: Iterable[_T]) -> AsyncIterator[_T]:
+def _iter_to_aiter_threaded(iterable: Iterable[T]) -> AsyncIterator[T]:
     """Convert an iterable to an async iterable (running the iterable in a background thread)."""
 
-    q = CloseableQueue[_T]()
+    q = CloseableQueue[T]()
     loop = asyncio.get_running_loop()
 
     def _inner() -> None:
@@ -55,7 +48,7 @@ def _iter_to_aiter_threaded(iterable: Iterable[_T]) -> AsyncIterator[_T]:
     return aiter(q)
 
 
-def iter_to_aiter(iterable: Iterable[_T], to_thread: bool) -> AsyncIterator[_T]:
+def iter_to_aiter(iterable: Iterable[T], to_thread: bool) -> AsyncIterator[T]:
     """Convert an iterable to an async iterable.
 
     Args:
@@ -70,19 +63,28 @@ def iter_to_aiter(iterable: Iterable[_T], to_thread: bool) -> AsyncIterator[_T]:
         return _iter_to_aiter_threaded(iterable)
 
     @functools.wraps(iterable.__iter__)
-    async def _inner() -> AsyncIterator[_T]:
+    async def _inner() -> AsyncIterator[T]:
         for it in iterable:
             yield it
-            print("put", it, "in iter_to_aiter")
             await asyncio.sleep(0)
 
     return _inner()
 
 
+@overload
+def ensure_coro_fn(fn: Callable[P, CoroT[T]], to_thread: bool = ...) -> Callable[P, CoroT[T]]:
+    ...
+
+
+@overload
+def ensure_coro_fn(fn: Callable[P, T], to_thread: bool = ...) -> Callable[P, CoroT[T]]:
+    ...
+
+
 def ensure_coro_fn(
-    fn: Callable[_P, _T] | Callable[_P, Coroutine[Any, Any, _T]],
+    fn: Callable[P, T] | Callable[P, CoroT[T]],
     to_thread: bool = False,
-) -> Callable[_P, Coroutine[Any, Any, _T]]:
+) -> Callable[P, CoroT[T]]:
     """Given a sync or async function, return an async function.
 
     Args:
@@ -95,27 +97,29 @@ def ensure_coro_fn(
 
     if asyncio.iscoroutinefunction(fn):
         return fn
+    else:
+        fn = cast(Callable[P, T], fn)
 
-    _sync_fn = cast(Callable[_P, _T], fn)
+    _sync_fn = cast(Callable[P, R], fn)
     if to_thread:
 
         @functools.wraps(fn)
-        async def _async_fn(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+        async def _async_fn(*args: P.args, **kwargs: P.kwargs) -> R:
             return await asyncio.to_thread(_sync_fn, *args, **kwargs)
 
     else:
 
         @functools.wraps(fn)
-        async def _async_fn(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+        async def _async_fn(*args: P.args, **kwargs: P.kwargs) -> R:
             return _sync_fn(*args, **kwargs)
 
     return _async_fn
 
 
 def ensure_async_iterator(
-    iterable: Iterable[_T] | AsyncIterable[_T],
+    iterable: Iterable[T] | AsyncIterable[T],
     to_thread: bool = True,
-) -> AsyncIterator[_T]:
+) -> AsyncIterator[T]:
     """Given an iterable or async iterable, return an async iterable.
 
     Args:
@@ -132,7 +136,7 @@ def ensure_async_iterator(
     return aiter(iter_to_aiter(iterable, to_thread=to_thread))
 
 
-def create_future() -> Future[_T]:
+def create_future() -> Future[T]:
     return asyncio.get_running_loop().create_future()
 
 
@@ -142,6 +146,4 @@ __all__ = (
     "ensure_coro_fn",
     "ensure_async_iterator",
     "create_future",
-    "NoValueSentinel",
-    "SentinelType",
 )

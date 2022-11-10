@@ -3,10 +3,8 @@ from __future__ import annotations
 import asyncio
 import functools
 from abc import abstractmethod
-from collections import deque
 from datetime import timedelta
 from itertools import chain
-from operator import getitem
 from typing import (
     Any,
     AsyncIterable,
@@ -22,8 +20,9 @@ from typing import (
     overload,
 )
 
-from astream.stream import Stream
-from astream.utils import SentinelType, ensure_async_iterator, ensure_coro_fn, NoValueSentinel
+from astream import NoValueSentinel, SentinelType
+from astream import Stream
+from astream import ensure_async_iterator, ensure_coro_fn
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -128,7 +127,7 @@ def aflatmap(
     iterable: AsyncIterable[_T],
 ) -> Stream[_U]:
     """An asynchronous version of `flatmap`."""
-    return Stream(iterable).aflatmap(fn)
+    return Stream(iterable).aflatmap(fn)  # type: ignore
 
 
 arange = stream(range)
@@ -239,7 +238,7 @@ async def ascan(
     yield crt
 
     async for item in _it_async:
-        crt = await _fn_async(crt, item)
+        crt = await _fn_async(crt, item)  # type: ignore
         yield crt
 
 
@@ -277,7 +276,7 @@ async def areduce(
     crt = cast(_T, initial)
 
     async for item in _it_async:
-        crt = await _fn_async(crt, item)
+        crt = await _fn_async(crt, item)  # type: ignore
     return crt
 
 
@@ -327,6 +326,7 @@ __all__ = (
     "amap",
     "aflatmap",
     "arange",
+    "arange_delayed",
     "amerge",
     "ascan",
     "areduce",

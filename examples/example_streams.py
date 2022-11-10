@@ -7,9 +7,13 @@ from functools import partial
 from types import FunctionType
 from typing import Callable, Generic, TypeVar, ParamSpec, Iterable
 
-from astream import stream, arange
+from rich import inspect
+from rich.console import Console
+
+from astream import stream, arange, run_sync
 from astream.experimental.partializer import F
 from astream.experimental.surrogate import It
+from astream.stream_grouper import apredicate_map, Default, apredicate_match_map
 from astream.stream_utils import dotget
 
 
@@ -98,14 +102,47 @@ async def adot() -> None:
         print(data)
 
 
-async def aflatten() -> None:
+async def _aflatten() -> None:
     def tolist(it: int) -> list[int]:
         return list(range(it))
 
-    s = arange(10) / F(tolist)
-    reveal_type(s)
-    ss = +s
-    reveal_type(ss)
+    def is_multiple_of(it: int, of: int) -> bool:
+        return it % of == 0
+
+    s = arange(100) / apredicate_map(
+        {
+            F(is_multiple_of)(of=2): lambda it: it * 2,
+            F(is_multiple_of)(of=3): lambda it: it * 3,
+            Default: lambda it: it * 5,
+        }
+    )
+    s = (
+        arange(100)
+        / (lambda it: (it,))
+        / apredicate_map(
+            {
+                (lambda n: n[0] % 3 == 0): lambda it: (*it, "fizz"),
+                (lambda n: n[0] % 5 == 0): lambda it: (*it, "buzz"),
+                Default: lambda it: it,
+            }
+        )
+        / (lambda it: f"{it[0]} {''.join(it[1:])}")
+    )
+
+    return [it async for it in s]
+
+
+@run_sync
+async def aflatten() -> list[int]:
+    return [it async for it in _aflatten()]
+
+
+def aflatten() -> list[int]:
+    console = Console(force_terminal=True)
+    result = asyncio.run(_aflatten())
+    inspect(result, console=console)
+
+    return result
 
 
 if __name__ == "__main__":

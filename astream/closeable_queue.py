@@ -10,6 +10,8 @@ from asyncio.queues import (
 from collections.abc import AsyncIterable
 from typing import Any, Coroutine, TypeAlias, TypeVar
 
+from astream.protocols.queue import QueueProtocol
+
 T = TypeVar("T")
 Coro: TypeAlias = Coroutine[Any, Any, T]
 
@@ -22,7 +24,7 @@ class QueueExhausted(Exception):
     ...
 
 
-class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
+class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], QueueProtocol[T, T]):
     """A closeable version of the asyncio.Queue class.
 
     This class is a closeable version of the asyncio.Queue class.
@@ -160,11 +162,11 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
     #     )
 
 
-class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueue[T]):
+class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueue[T], QueueProtocol[T,T]):
     """A closeable version of PriorityQueue."""
 
 
-class CloseableLifoQueue(AsyncioLifoQueue[T], CloseableQueue[T]):
+class CloseableLifoQueue(AsyncioLifoQueue[T], CloseableQueue[T], QueueProtocol[T,T]):
     """A closeable version of LifoQueue."""
 
 
