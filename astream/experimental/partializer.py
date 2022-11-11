@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import operator
-from
 from abc import ABCMeta
 from collections import defaultdict
 from copy import deepcopy, copy
@@ -19,7 +18,8 @@ from typing import (
     Any,
     Mapping,
     NamedTuple,
-    Dict, Tuple,
+    Dict,
+    Tuple,
 )
 
 import rich
@@ -27,6 +27,7 @@ from rich import inspect
 from rich.table import Table
 
 from astream import Stream, arange, stream
+from astream.experimental.simple_surrogate import SimpleSurrogate
 from astream.stream import StreamMapper, StreamFilterer, StreamFlatMapper
 
 _T = TypeVar("_T")
@@ -48,99 +49,16 @@ class F(Generic[_T, _U]):
     partial: Callable[[_T], _U]
 
     def __init__(self, fn: Any) -> None:
-        if isinstance(fn, LazyProxyObj):
+        if isinstance(fn, SimpleSurrogate):
 
             # todo - properly implement cases in which an argument to a lazy proxy is a lazy proxy.
             #  I'm sure it's possible, but it's not a priority right now. The below is a broken
             #  implementation of this. For some fun, try out the below with something like
             #  print(F(it - 1 + it * 5)(1))
-            ops = deepcopy(fn.lazy_proxy_operations)
-            fn.lazy_proxy_operations.clear()
-            def _fn(obj: _T) -> _U:
-                for op in ops:
-                    # args = list(op.args)
-                    # for i, arg in enumerate(args):
-                    #     if isinstance(arg, LazyProxyObj):
-                    #         print("LazyProxyObj in args")
-                    #         args[i] = obj
-                    # print(f"{op.func}({obj}, {op.args})")
-                    obj = op(obj)
-                return cast(_U, obj)
-
-            # For now, raise an error if a lazy proxy is passed as an argument to another lazy proxy.
-
-            # if any(op for op in ops if any(isinstance(arg, LazyProxyObj) for arg in op.args)):
-            #     raise ValueError("LazyProxyObj in args is not (yet) supported.")
-            #
-            # # Order ops by precedence
-            ordered_ops = defaultdict(list)
-            precedence = {
-                operator.add: -1,
-                operator.iadd: -1,
-                operator.sub: -1,
-                operator.isub: -1,
-                operator.mul: -2,
-                operator.imul: -2,
-                operator.truediv: -2,
-                operator.itruediv: -2,
-                operator.floordiv: -2,
-                operator.ifloordiv: -2,
-                operator.mod: -2,
-                operator.pow: -3,
-                operator.lshift: -4,
-                operator.rshift: -4,
-                operator.and_: -5,
-                operator.xor: -6,
-                operator.or_: -7,
-                operator.neg: -8,
-                operator.pos: -8,
-                operator.abs: -8,
-                operator.invert: -8,
-                operator.lt: -9,
-                operator.le: -9,
-                operator.eq: -9,
-                operator.ne: -9,
-                operator.gt: -9,
-                operator.ge: -9,
-                operator.contains: -9,
-                operator.not_: -9,
-                operator.is_: -9,
-                operator.is_not: -9,
-                operator.index: -9,
-                operator.getitem: -9,
-                operator.setitem: -9,
-                operator.delitem: -9,
-                operator.attrgetter: -9,
-                operator.itemgetter: -9,
-                operator.methodcaller: -9,
-                _op_call: -9,
-            }
-            for op in ops:
-                try:
-                    print(op.func, precedence[op.func])
-                    ordered_ops[precedence[op.func]].append(op)
-                except:
-                    print(op, "not in precedence")
-
-            for i in ordered_ops:
-                print(i, ordered_ops[i], [oop.args for oop in ordered_ops[i]])
-
-            # for op in ops:
-            #     ordered_ops[precedence[op.func]].append(op)
-            #
-            #
-            # def _fn(obj: _T) -> _U:
-            #     for op in ops:
-            #         print(f"op: {op}, obj: {obj}")
-            #         obj = op(obj)
-            #     return cast(_U, obj)
-
-            # fn.lazy_proxy_operations.clear()
-
-            self.partial = _fn
+            self.partial = fn.surrogate_get_partial()
+            fn.surrogate_clear_operations()
         else:
             self.partial = fn
-
 
     def __call__(self, obj: _T) -> _U:
         # todo - split unitialized/initialized F objects into two classes
@@ -165,11 +83,14 @@ class F(Generic[_T, _U]):
 # Proxy object - after operations are performed on it, it will be replaced with a function which
 # takes an object and performs the same operations on it.
 
+
 def partial_flipped(func: Callable[..., _R], /, *args: Any, **kwargs: Any) -> Callable[..., _R]:
     """Same as partial(func, *args, **kwargs), but with the arguments flipped."""
+
     @functools.wraps(func)
     def _fn(*args2: Any, **kwargs2: Any) -> _R:
         return func(*args2, *args, **kwargs, **kwargs2)
+
     _fn.args = args
     _fn.func = func
     return _fn
@@ -180,8 +101,6 @@ class LazyProxyObj(Mapping[Any, Any]):
 
     def __init__(self) -> None:
         self.lazy_proxy_operations: defaultdict[int, list[Any]] = defaultdict(list)
-
-
 
     # def __call__(self, *args: Any, **kwargs: Any) -> LazyProxyObj:
     #     p = partial(_op_call, *args, **kwargs)
@@ -215,7 +134,9 @@ class LazyProxyObj(Mapping[Any, Any]):
     def __deepcopy__(self, memo: dict[int, Any]) -> LazyProxyObj:
         return self
 
-    def _do_binary_op(self, op: Callable[[Any, Any], Any], other: Any, flipped: bool=True) -> LazyProxyObj:
+    def _do_binary_op(
+        self, op: Callable[[Any, Any], Any], other: Any, flipped: bool = True
+    ) -> LazyProxyObj:
         print(f"op: {op}, other: {other}, flipped: {flipped}")
         p = partial_flipped(op, other) if flipped else partial(op, other)
         self.lazy_proxy_operations.append(p)
@@ -313,6 +234,7 @@ class LazyProxyObj(Mapping[Any, Any]):
     #  def items(self):
     #  (for unpacking)
 
+
 class Op(NamedTuple):
     op: Callable
     args: Tuple[Any, ...] = ()
@@ -320,6 +242,7 @@ class Op(NamedTuple):
 
     def resolve(self, obj: Any) -> Any:
         return self.op(obj, *self.args, **self.kwargs)
+
 
 class LazyProxyObjPrecedence:
     __slots__ = ("lazy_proxy_operations",)
@@ -382,22 +305,26 @@ class LazyProxyObjPrecedence:
     #     return self
 
     @staticmethod
-    def _add_precedence(precedence: int, func: Callable, flip_args: bool=False) -> Callable[..., LazyProxyObjPrecedence]:
+    def _add_precedence(
+        precedence: int, func: Callable, flip_args: bool = False
+    ) -> Callable[..., LazyProxyObjPrecedence]:
         def _f(*args, **kwargs) -> Any:
             self = args[0]
             if flip_args:
                 args = args[::-1]
             self.lazy_proxy_operations[precedence].append((func, args, kwargs))
             return self
+
         return _f
+
     # _add_precedence = meth(_add_precedence)
 
     __getitem__ = _add_precedence(1, lambda x, y: x[y])
     __getattr__ = _add_precedence(1, lambda x, y: getattr(x, y))
     __call__ = _add_precedence(1, lambda x, *args, **kwargs: x(*args, **kwargs))
 
-    __pow__ = _add_precedence(3, lambda x, y: x ** y)
-    __rpow__ = _add_precedence(3, lambda x, y: y ** x)
+    __pow__ = _add_precedence(3, lambda x, y: x**y)
+    __rpow__ = _add_precedence(3, lambda x, y: y**x)
 
     __add__ = _add_precedence(5, lambda x, y: x + y)
     __radd__ = _add_precedence(5, lambda x, y: y + x)
@@ -410,6 +337,8 @@ class LazyProxyObjPrecedence:
 
 
 lp = LazyProxyObjPrecedence()
+
+it = LazyProxyObj()
 
 x = lp[4].something
 

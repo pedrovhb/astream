@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+from copy import copy
+from dataclasses import dataclass, field
+from functools import partialmethod
+from types import SimpleNamespace
+from typing import *
+
+from astream import Stream
+
+
+class SurrogateOperation(NamedTuple):
+    operation: str
+    args: Tuple[Any, ...] = ()
+    kwargs_: Dict[str, Any] | None = None
+
+    @property
+    def kwargs(self) -> Dict[str, Any]:
+        if self.kwargs_ is None:
+            return {}
+        return self.kwargs_
+
+
+class SimpleSurrogate:
+    def __init__(self) -> None:
+        self._surrogate_ops: list[SurrogateOperation] = []
+
+    def __getattribute__(self, name: str) -> Callable[..., SimpleSurrogate]:
+        if name.startswith(
+            ("surrogate_", "_surrogate_", "issubclass", "isinstance", "__class", "__stream_map__")
+        ):
+            return super().__getattribute__(name)
+        self._surrogate_ops.append(SurrogateOperation("__getattribute__", (name,)))
+        return self
+
+    def __call__(self, *args: Any, **kwargs: Any) -> SimpleSurrogate:
+        self._surrogate_ops.append(SurrogateOperation("__call__", args, kwargs))
+        return self
+
+    #
+    # def __getitem__(self, key: Any) -> SimpleSurrogate:
+    #     self._surrogate_ops.append(SurrogateOperation("__getitem__", (key,)))
+    #     return self
+
+    @staticmethod
+    def _surrogate_add_operation(
+        name: str, flip_args: bool = False
+    ) -> Callable[..., SimpleSurrogate]:
+        def _add_operation(*args: Any, **kwargs: Any) -> SimpleSurrogate:
+            self, *argsl = cast(SimpleSurrogate, args[0]), *args[1:]
+            if flip_args:
+                argsl = argsl[::-1]
+            if any(isinstance(arg, SurrogateOperation) for arg in argsl) or any(
+                isinstance(arg, SurrogateOperation) for arg in kwargs.values()
+            ):
+                raise ValueError("SurrogateOperation cannot be used as argument")
+            self._surrogate_ops.append(SurrogateOperation(name, tuple(argsl), kwargs))
+            return self
+
+        return _add_operation
+
+    __getitem__ = _surrogate_add_operation(name="__getitem__")
+    __setitem__ = _surrogate_add_operation(name="__setitem__")
+    __delitem__ = _surrogate_add_operation(name="__delitem__")
+    __contains__ = _surrogate_add_operation(name="__contains__")
+    __add__ = _surrogate_add_operation(name="__add__")
+    __radd__ = _surrogate_add_operation(name="__radd__", flip_args=True)
+    __sub__ = _surrogate_add_operation(name="__sub__")
+    __rsub__ = _surrogate_add_operation(name="__rsub__", flip_args=True)
+    __mul__ = _surrogate_add_operation(name="__mul__")
+    __rmul__ = _surrogate_add_operation(name="__rmul__", flip_args=True)
+    __matmul__ = _surrogate_add_operation(name="__matmul__")
+    __rmatmul__ = _surrogate_add_operation(name="__rmatmul__", flip_args=True)
+    __truediv__ = _surrogate_add_operation(name="__truediv__")
+    __rtruediv__ = _surrogate_add_operation(name="__rtruediv__", flip_args=True)
+    __floordiv__ = _surrogate_add_operation(name="__floordiv__")
+    __rfloordiv__ = _surrogate_add_operation(name="__rfloordiv__", flip_args=True)
+    __mod__ = _surrogate_add_operation(name="__mod__")
+    __rmod__ = _surrogate_add_operation(name="__rmod__", flip_args=True)
+    __divmod__ = _surrogate_add_operation(name="__divmod__")
+    __rdivmod__ = _surrogate_add_operation(name="__rdivmod__", flip_args=True)
+    __pow__ = _surrogate_add_operation(name="__pow__")
+    __rpow__ = _surrogate_add_operation(name="__rpow__", flip_args=True)
+    __lshift__ = _surrogate_add_operation(name="__lshift__")
+    __rshift__ = _surrogate_add_operation(name="__rshift__")
+    __rrshift__ = _surrogate_add_operation(name="__rrshift__", flip_args=True)
+    __rlshift__ = _surrogate_add_operation(name="__rlshift__", flip_args=True)
+    __and__ = _surrogate_add_operation(name="__and__")
+    __rand__ = _surrogate_add_operation(name="__rand__", flip_args=True)
+    __or__ = _surrogate_add_operation(name="__or__")
+    __ror__ = _surrogate_add_operation(name="__ror__", flip_args=True)
+    __xor__ = _surrogate_add_operation(name="__xor__")
+    __rxor__ = _surrogate_add_operation(name="__rxor__", flip_args=True)
+    __iadd__ = _surrogate_add_operation(name="__iadd__")
+    __isub__ = _surrogate_add_operation(name="__isub__")
+    __imul__ = _surrogate_add_operation(name="__imul__")
+    __imatmul__ = _surrogate_add_operation(name="__imatmul__")
+    __itruediv__ = _surrogate_add_operation(name="__itruediv__")
+    __ifloordiv__ = _surrogate_add_operation(name="__ifloordiv__")
+    __imod__ = _surrogate_add_operation(name="__imod__")
+    __ipow__ = _surrogate_add_operation(name="__ipow__")
+    __ilshift__ = _surrogate_add_operation(name="__ilshift__")
+    __irshift__ = _surrogate_add_operation(name="__irshift__")
+    __iand__ = _surrogate_add_operation(name="__iand__")
+    __ior__ = _surrogate_add_operation(name="__ior__")
+    __ixor__ = _surrogate_add_operation(name="__ixor__")
+    __neg__ = _surrogate_add_operation(name="__neg__")
+    __pos__ = _surrogate_add_operation(name="__pos__")
+    __abs__ = _surrogate_add_operation(name="__abs__")
+    __invert__ = _surrogate_add_operation(name="__invert__")
+    __complex__ = _surrogate_add_operation(name="__complex__")
+    __int__ = _surrogate_add_operation(name="__int__")
+    __float__ = _surrogate_add_operation(name="__float__")
+    __round__ = _surrogate_add_operation(name="__round__")
+    __index__ = _surrogate_add_operation(name="__index__")
+    __trunc__ = _surrogate_add_operation(name="__trunc__")
+    __floor__ = _surrogate_add_operation(name="__floor__")
+    __ceil__ = _surrogate_add_operation(name="__ceil__")
+    __enter__ = _surrogate_add_operation(name="__enter__")
+    __exit__ = _surrogate_add_operation(name="__exit__")
+    __await__ = _surrogate_add_operation(name="__await__")
+    __aiter__ = _surrogate_add_operation(name="__aiter__")
+    __anext__ = _surrogate_add_operation(name="__anext__")
+    __aenter__ = _surrogate_add_operation(name="__aenter__")
+    __aexit__ = _surrogate_add_operation(name="__aexit__")
+    __len__ = _surrogate_add_operation(name="__len__")
+    __iter__ = _surrogate_add_operation(name="__iter__")
+
+    __eq__ = _surrogate_add_operation(name="__eq__")
+    __ne__ = _surrogate_add_operation(name="__ne__")
+    __lt__ = _surrogate_add_operation(name="__lt__")
+    __le__ = _surrogate_add_operation(name="__le__")
+    __gt__ = _surrogate_add_operation(name="__gt__")
+    __ge__ = _surrogate_add_operation(name="__ge__")
+
+    def __bool__(self):
+        self._surrogate_ops.append(SurrogateOperation("__bool__", (), {}))
+        return True
+
+    def surrogate_operations(self) -> tuple[SurrogateOperation, ...]:
+        """Return the operations that have been added to this surrogate."""
+        return tuple(self._surrogate_ops)
+
+    def surrogate_clear_operations(self) -> None:
+        """Clear all operations from this surrogate."""
+        self._surrogate_ops.clear()
+
+    def surrogate_get_partial(self) -> Callable[..., Any]:
+        """Return a partial function that will call the same operations as performed on the
+        surrogate since clearing.
+        """
+        ops = self.surrogate_operations()
+
+        def _partial(target: Any) -> Any:
+            for op in ops:
+                target = getattr(target, op.operation)(*op.args, **op.kwargs)
+            return target
+
+        return _partial
+
+    async def __stream_map__(self, stream: Stream) -> Stream:
+        return stream.amap(self.surrogate_get_partial())  # todo - fix
+
+
+it = SimpleSurrogate()

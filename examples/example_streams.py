@@ -3,17 +3,13 @@ from __future__ import annotations
 import random
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from functools import partial
-from types import FunctionType
-from typing import Callable, Generic, TypeVar, ParamSpec, Iterable
 
 from rich import inspect
 from rich.console import Console
 
 from astream import stream, arange, run_sync
 from astream.experimental.partializer import F
-from astream.experimental.surrogate import It
-from astream.stream_grouper import apredicate_map, Default, apredicate_match_map
+from astream.stream_grouper import apredicate_map, Default
 from astream.stream_utils import dotget
 
 
@@ -48,22 +44,16 @@ async def main() -> None:
 
     st = stream(db.iter_employees())
 
-    ss = st / (lambda e: print(e.name) or e) / (lambda e: e.likes) / print
+    def pegar_nome_empregado(it: Employee) -> str:
+        return it.name
 
-    async for _ in ss:
-        pass
+    def departamento_eh_ti(it: Employee) -> bool:
+        return it.department == "IT"
 
-    # What employees in IT like pizza?
-    st = stream(db.iter_employees())
-    async for employee in st % (lambda e: e.department == "IT") % (lambda e: "pizza" in e.likes):
-        print(employee)
-
-    # What employees in IT like pizza?
-    st = stream(db.iter_employees())
-
-    like_pizza = st % (lambda e: e.department == "IT") % (lambda e: "pizza" in e.likes)
-    async for employee in like_pizza:
-        print(employee, "likes pizza and is in IT")
+    async for empregado in st % departamento_eh_ti / pegar_nome_empregado / (
+        lambda nome: nome[::-1]
+    ):
+        print(empregado)
 
 
 async def adot() -> None:
@@ -148,5 +138,5 @@ def aflatten() -> list[int]:
 if __name__ == "__main__":
     import asyncio
 
-    asyncio.run(aflatten())
+    asyncio.run(main())
     # asyncio.run())

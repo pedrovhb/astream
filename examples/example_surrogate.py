@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from operator import getitem
+
 from loguru import logger
 
 from astream import stream
-from astream.experimental.partializer import F, it
+from astream.experimental.partializer import F
+from astream.experimental.simple_surrogate import it
 from astream.stream_grouper import apredicate_map
 
 
@@ -21,21 +24,24 @@ async def group_f() -> None:
         {"vehicle": "train", "max_speed": 200, "n_wheels": 0, "n_doors": 0},
     ]
 
+    def double_spd(x):
+        x["max_speed"] *= 2
+        return x
+
     s = stream(data) / apredicate_map(
         {
-            F(it["n_wheels"] == 0): lambda it: {**it, "type": "non-land"},
-            F(it["n_wheels"] == 2): lambda it: {**it, "type": "bicycle"},
-            F(it["n_wheels"] == 4): lambda it: {**it, "type": "car"},
-            F(it["n_wheels"] > 4): lambda it: {**it, "type": "machine"},
+            F(it["n_wheels"] == 0): F(it["max_speed"]),
+            F(it["n_wheels"] == 2): lambda x: {**x, "type": "bicycle"},
+            F(it["n_wheels"] == 4): double_spd,
+            F(it["n_wheels"] > 4): F(it["vehicle"]),
         }
     )
-
 
     async for v in s:
         logger.info(v)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import asyncio
 
     asyncio.run(group_f())
