@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 from operator import getitem
-from typing import AsyncIterable, Any
+from typing import Any, AsyncIterable
 
+import httpx
 import rich
 from loguru import logger
 
-from astream import stream, arange, atee
+from astream import arange, atee
 from astream.experimental.partializer import F
 from astream.experimental.simple_surrogate import it
-from astream.stream_grouper import apredicate_map, agroup_map, Default
-
-import httpx
+from astream.stream_grouper import Default, agroup_map, apredicate_map
 
 client = httpx.AsyncClient()
 

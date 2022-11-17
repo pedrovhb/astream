@@ -3,14 +3,16 @@ from __future__ import annotations
 import random
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
+from typing import TypeVar
 
 from rich import inspect
 from rich.console import Console
 
-from astream import stream, arange, run_sync
+from astream import arange, run_sync
 from astream.experimental.partializer import F
-from astream.stream_grouper import apredicate_map, Default
-from astream.stream_utils import dotget
+from astream.stream import Stream, StreamMappable
+from astream.stream_grouper import Default, apredicate_map
+from astream.transformer_utils import dotget
 
 
 @dataclass
@@ -42,7 +44,7 @@ class EmployeeDB:
 async def main() -> None:
     db = EmployeeDB()
 
-    st = stream(db.iter_employees())
+    st = Stream(db.iter_employees())
 
     def pegar_nome_empregado(it: Employee) -> str:
         return it.name
@@ -127,16 +129,59 @@ async def aflatten() -> list[int]:
     return [it async for it in _aflatten()]
 
 
-def aflatten() -> list[int]:
-    console = Console(force_terminal=True)
-    result = asyncio.run(_aflatten())
-    inspect(result, console=console)
+A = TypeVar("A")
+B = TypeVar("B")
+C = TypeVar("C")
 
-    return result
+
+_T = TypeVar("_T")
+_R = TypeVar("_R")
+
+
+class Enumerator(StreamMappable[int, tuple[int, int]]):
+    def __init__(self, start: int = 0) -> None:
+        self.start = start
+
+    def __stream_map__(self, s: Stream[int]) -> Stream[tuple[int, int]]:
+        async def _stream_map() -> AsyncIterable[tuple[int, int]]:
+            i = self.start
+            async for item in s:
+                yield i, item
+                i += 1
+
+        return Stream(_stream_map())
+
+
+async def aflatten_example() -> None:
+    async def to_range(m: int) -> AsyncIterable[int]:
+        for i in range(m):
+            yield i
+            # await asyncio.sleep(0.1)
+
+    def mul_two(x: int) -> int:
+        return x * 2
+
+    async def spell_out(x: int) -> tuple[int, str, str]:
+        return x, "fizz" if x % 3 == 0 else "", "buzz" if x % 5 == 0 else ""
+
+    def take_last_two(x: tuple[int, str, str]) -> list[int]:
+        return [xx if isinstance(xx, int) else len(xx) for xx in x]
+
+    def is_even(x: int) -> bool:
+        return x % 2 == 0
+
+    st = Stream(to_range(10)) / mul_two // arange / spell_out
+    # sm = +st.aclone()
+
+    async for item in st:
+        print(item)
+
+    # async for it in +st:
+    #     print(it)
 
 
 if __name__ == "__main__":
     import asyncio
 
-    asyncio.run(main())
+    asyncio.run(aflatten_example())
     # asyncio.run())

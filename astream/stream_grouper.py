@@ -7,16 +7,12 @@ from collections import defaultdict
 from enum import Enum
 from typing import *
 
-from astream import arange
+from astream import SentinelType, arange
 from astream.closeable_queue import CloseableQueue
 from astream.experimental.partializer import F
-from astream.protocols.type_aliases import SentinelType
-from astream.stream import Stream, StreamMapper
-from astream.stream_utils import arange_delayed, amerge
-from astream.utils import (
-    create_future,
-    ensure_coro_fn,
-)
+from astream.stream import Stream, StreamMappable
+from astream.stream_utils import amerge, arange_delayed
+from astream.utils import create_future, ensure_coro_fn
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -249,37 +245,37 @@ def _apredicate_map(
 
 def apredicate_map(
     mapping_functions: Mapping[UnaryFn[_T, bool] | _DefaultT, UnaryFn[_T, _U]],
-) -> StreamMapper[_T, _U]:
+) -> StreamMappable[_T, _U]:
     @functools.wraps(_apredicate_map)
     def _partial(stream: AsyncIterable[_T]) -> Stream[_U]:
         return _apredicate_map(stream, mapping_functions, stop_after_first_match=False)
 
     setattr(_partial, "__stream_map__", _partial)  # See: WithStream protocol
-    return cast(StreamMapper[_T, _U], _partial)
+    return cast(StreamMappable[_T, _U], _partial)
 
 
 def apredicate_match_map(
     mapping_functions: Mapping[UnaryFn[_T, bool] | _DefaultT, UnaryFn[_T, _U]]
-) -> StreamMapper[_T, _U]:
+) -> StreamMappable[_T, _U]:
     @functools.wraps(_apredicate_map)
     def _partial(stream: AsyncIterable[_T]) -> Stream[_U]:
         return _apredicate_map(stream, mapping_functions, stop_after_first_match=True)
 
     setattr(_partial, "__stream_map__", _partial)  # See: WithStream protocol
-    return cast(StreamMapper[_T, _U], _partial)
+    return cast(StreamMappable[_T, _U], _partial)
 
 
 def agroup_map(
     grouping_function: _GroupingFunctionT[_T, _KeyT],
     mapping_functions: Mapping[_KeyT | _DefaultT, UnaryFn[_T, _U]],
-) -> StreamMapper[_T, _U]:
+) -> StreamMappable[_T, _U]:
     @functools.wraps(_agroup_map)
     def _partial(stream: AsyncIterable[_T]) -> Stream[_U]:
         return _agroup_map(grouping_function, stream, mapping_functions)
 
     setattr(_partial, "__stream_map__", _partial)  # See: StreamMapper protocol
     # todo - use f instead?
-    return cast(StreamMapper[_T, _U], _partial)
+    return cast(StreamMappable[_T, _U], _partial)
 
 
 if __name__ == "__main__":

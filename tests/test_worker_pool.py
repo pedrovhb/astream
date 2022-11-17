@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from astream.stream_utils import arange
+from astream import arange
 from astream.worker_pool import WorkerPool
 
 
@@ -15,11 +15,11 @@ async def test_worker_pool() -> None:
 
     wp = WorkerPool(do_work, 3)
 
-    tasks = []
-    async for item in arange(10):
-        result = wp(item)
-        tasks.append(result)
+    expected = iter(range(10))
 
-    results = await asyncio.gather(*tasks)
-    assert results == [i * 2 for i in range(10)]
-    await wp.close()
+    s = arange(10)
+    print(s)
+    print(type(s))
+    async for item in arange(10) / wp:
+        assert isinstance(item, int)
+        assert item == next(expected) * 2

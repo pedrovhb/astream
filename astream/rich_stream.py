@@ -7,16 +7,16 @@ from collections import deque
 from datetime import datetime, timedelta
 from functools import partial
 from itertools import pairwise
-from typing import TypeVar, Iterable, AsyncIterable, Callable, Generic
+from typing import AsyncIterable, Callable, Generic, Iterable, TypeVar
 
-from rich.segment import Segment
+from humanize import naturaldelta, precisedelta
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
+from rich.segment import Segment
 
-from astream import Stream, NoValueSentinel, SentinelType, arange, iter_to_aiter
+from astream import NoValueSentinel, SentinelType, Stream, arange, iter_to_aiter
 from astream.stream_grouper import agroup_map
-from astream.stream_utils import arange_delayed, amerge, aenumerate
-from humanize import naturaldelta, precisedelta
+from astream.stream_utils import aenumerate, amerge, arange_delayed
 
 try:
     import uvloop

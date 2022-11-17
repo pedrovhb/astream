@@ -26,6 +26,7 @@ class SimpleSurrogate:
         self._surrogate_ops: list[SurrogateOperation] = []
 
     def __getattribute__(self, name: str) -> Callable[..., SimpleSurrogate]:
+        print(f"__getattribute__({name})")
         if name.startswith(
             ("surrogate_", "_surrogate_", "issubclass", "isinstance", "__class", "__stream_map__")
         ):

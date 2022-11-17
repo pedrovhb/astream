@@ -9,6 +9,7 @@ python = "^3.10"
 wrapt = "^1.14.1"
 decorator = "^5.1.1"
 lazy-object-proxy = "^1.8.0"
+mypy = "^0.991"
 
 [tool.poetry.dev-dependencies]
 black = "^22.10.0"
@@ -16,7 +17,6 @@ pytest = "^7.2.0"
 pytest-asyncio = "^0.20.1"
 hypothesis = "^6.56.4"
 pre-commit = "^2.20.0"
-mypy = "^0.982"
 bump2version = "^1.0.1"
 usort = "^1.0.5"
 flake8 = "^5.0.4"
@@ -43,7 +43,6 @@ warn_unreachable = true
 strict = true
 show_error_codes = true
 show_traceback = true
-enable_recursive_aliases = true
 
 
 [tool.black]

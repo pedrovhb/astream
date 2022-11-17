@@ -1,148 +1,133 @@
 from __future__ import annotations
 
 import asyncio
-import functools
-import inspect
-import random
 from asyncio import Future
 from typing import (
     Any,
+    AsyncIterable,
+    AsyncIterator,
     Callable,
-    cast,
     Coroutine,
-    Generator,
     Generic,
-    overload,
+    Iterable,
     ParamSpec,
     TypeAlias,
     TypeVar,
+    cast,
+    overload,
 )
 
+from astream import (
+    Stream,
+    StreamFilterable,
+    StreamFlatMappable,
+    StreamMappable,
+    afilter,
+    aflatmap,
+    amap,
+    ensure_coro_fn,
+)
 from astream.closeable_queue import CloseableQueue
 
 _T = TypeVar("_T")
+_U = TypeVar("_U")
+_R = TypeVar("_R")
 _P = ParamSpec("_P")
-_P2 = ParamSpec("_P2")
-
-_InputT = TypeVar("_InputT")
-_OutputT = TypeVar("_OutputT")
-
-Coro: TypeAlias = Coroutine[Any, Any, _OutputT]
 
 
-class WorkerPool(Generic[_P, _OutputT]):
-    _acall: Callable[_P, Coro[_OutputT]]
+_CoroT: TypeAlias = Coroutine[Any, Any, _T]
 
+
+class WorkerPool(
+    StreamMappable[_T, _R], StreamFilterable[_T], StreamFlatMappable[_T, _R], Generic[_T, _R]
+):
     @overload
-    def __init__(
-        self,
-        fn: Callable[_P, Coro[_OutputT]],
-        n_workers: int,
-        queue_size: int = ...,
-        start: bool = ...,
-    ) -> None:
+    def __init__(self, fn: Callable[[_T], _CoroT[_R]], num_workers: int = ...) -> None:
         ...
 
     @overload
-    def __init__(
-        self,
-        fn: Callable[_P, _OutputT],
-        n_workers: int,
-        queue_size: int = ...,
-        start: bool = ...,
-    ) -> None:
+    def __init__(self, fn: Callable[[_T], _R], num_workers: int = ...) -> None:
         ...
 
     def __init__(
-        self,
-        fn: Callable[_P, Coro[_OutputT]] | Callable[_P, _OutputT],
-        n_workers: int,
-        queue_size: int = 100,
-        start: bool = True,
+        self, fn: Callable[[_T], _CoroT[_R]] | Callable[[_T], _R], num_workers: int = 5
     ) -> None:
+        self._fn = cast(Callable[[_T], _CoroT[_R]], ensure_coro_fn(fn))
+        self._num_workers = num_workers
 
-        if not inspect.iscoroutinefunction(fn):
-            _fn_sync = cast(Callable[_P, _OutputT], fn)
+        self.in_q = CloseableQueue[_T](self._num_workers)
+        self.out_q = CloseableQueue[_R](self._num_workers)
 
-            async def _fn(*args: _P.args, **kwargs: _P.kwargs) -> _OutputT:
-                return await asyncio.to_thread(_fn_sync, *args, **kwargs)
+    async def _feed(self, stream: AsyncIterator[_T]) -> None:
+        async for item in stream:
+            await self.in_q.put(item)
+        self.in_q.close()
 
-        else:
-            _fn = cast(Callable[_P, Coro[_OutputT]], fn)
+    def _stream_op(self, stream: Stream[_T], op: Callable[..., Stream[_R]]) -> Stream[_R]:
 
-        self._fn = _fn
+        worker_done_futs = tuple(
+            asyncio.get_running_loop().create_future() for _ in range(self._num_workers)
+        )
 
-        self._in_q = CloseableQueue[tuple[Future[_OutputT], Coro[_OutputT]]](queue_size)
+        async def _worker(done_fut: Future[None]) -> None:
+            async for item in op(self._fn, self.in_q):
+                await self.out_q.put(item)
+            done_fut.set_result(None)
+            await self.in_q.wait_exhausted()
+            await asyncio.gather(*worker_done_futs)
+            self.out_q.close()
 
-        self._n_workers = n_workers
-        self._workers: list[asyncio.Task[None]] = []
-        self._idle_worker_events = [asyncio.Event() for _ in range(self._n_workers)]
+        asyncio.create_task(self._feed(stream))
+        for fut in worker_done_futs:
+            asyncio.create_task(_worker(fut))
 
-        @functools.wraps(fn)
-        async def _acall(*args: _P.args, **kwargs: _P.kwargs) -> _OutputT:
-            if self._in_q.is_closed:
-                raise RuntimeError("Pool is closed")
-            fut: Future[_OutputT] = asyncio.get_running_loop().create_future()
-            await self._in_q.put((fut, self._fn(*args, **kwargs)))
-            item = await fut
-            return item
+        return Stream(self.out_q)
 
-        self._acall = _acall
+    def __stream_map__(self, stream: Stream[_T]) -> Stream[_R]:
+        return self._stream_op(stream, amap)
 
-        self._running = asyncio.Event()
-        if start:
-            self.start()
+    def __stream_filter__(self: WorkerPool[_T, _T], stream: Stream[_T]) -> Stream[_T]:
+        return self._stream_op(stream, afilter)
 
-    def start(self) -> None:
-        self._workers = [asyncio.create_task(self._worker(ev)) for ev in self._idle_worker_events]
-        self._running.set()
+    @overload
+    def __stream_flatmap__(self, stream: Stream[AsyncIterable[_U]]) -> Stream[_R]:
+        ...
 
-    async def resume(self) -> None:
-        self._running.set()
+    @overload
+    def __stream_flatmap__(self, stream: Stream[Iterable[_U]]) -> Stream[_R]:
+        ...
 
-    async def pause(self) -> None:
-        self._running.clear()
-
-    async def close(self) -> None:
-        self._in_q.close()
-        await self._in_q.wait_exhausted()
-
-    @property
-    def n_idle_workers(self) -> int:
-        return sum(ev.is_set() for ev in self._idle_worker_events)
-
-    def __await__(self) -> Generator[Any, None, None]:
-        return asyncio.ensure_future(self._in_q.wait_exhausted()).__await__()
-
-    def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> Coroutine[Any, Any, _OutputT]:
-        return self._acall(*args, **kwargs)
-
-    async def _worker(self, worker_idle_event: asyncio.Event) -> None:
-        async for fut, coro in self._in_q:
-            await self._running.wait()
-            worker_idle_event.clear()
-            try:
-                result = await coro
-            except Exception as e:
-                fut.set_exception(e)
-            else:
-                fut.set_result(result)
-            finally:
-                if self._in_q.empty():
-                    worker_idle_event.set()
+    def __stream_flatmap__(
+        self, stream: Stream[AsyncIterable[_U]] | Stream[Iterable[_U]]
+    ) -> Stream[_R]:
+        ...
+        return self._stream_op(stream, aflatmap)
 
 
-def run_in_worker_pool(
-    n_workers: int,
-    queue_size: int = 100,
-    start: bool = True,
-) -> Callable[[Callable[_P, Coro[_OutputT]]], WorkerPool[_P, _OutputT]]:
-    """Decorator to create a worker pool from a function."""
-    wp_factory = cast(Callable[_P, WorkerPool[_P, _OutputT]], WorkerPool)  # type: ignore
-    return functools.partial(wp_factory, n_workers=n_workers, queue_size=queue_size, start=start)
+__all__ = ("WorkerPool",)
 
+if __name__ == "__main__":
 
-__all__ = ("WorkerPool", "run_in_worker_pool")
+    async def main() -> None:
+        async def fn(i: int) -> int:
+            await asyncio.sleep(0.01)
+            return i
+
+        async def fnfilter(i: int) -> bool:
+            await asyncio.sleep(1)
+            return i % 7 == 0
+
+        st = (
+            Stream(range(100))
+            / WorkerPool(fn, 10)
+            % WorkerPool(fnfilter, 10)
+            // WorkerPool(range, 10)
+        )
+
+        async for item in st:
+            print(item)
+
+    asyncio.run(main())
 
 """
 
@@ -191,29 +176,28 @@ stream = Stream(range(10))
 
 """
 
-if __name__ == "__main__":
-
-    async def main() -> None:
-        @run_in_worker_pool(4)
-        async def my_fn(x: int) -> float:
-            await asyncio.sleep(0.05)
-            return 420 / (x - 69)
-
-        async def funner(range_start: int) -> None:
-            for x in range(range_start, range_start + 10):
-                f = my_fn(x)
-                print(my_fn.n_idle_workers)
-                await asyncio.sleep(random.uniform(0.01, 0.1))
-                try:
-                    print(f"result: {await f}")
-                except Exception as e:
-                    print(f"error: {e}")
-            print("done with", range_start)
-
-        tasks = [asyncio.create_task(funner(i * 10)) for i in range(10)]
-        print("waiting for tasks")
-        await asyncio.gather(*tasks)
-        await my_fn.close()
-        print("done")
-
-    asyncio.run(main())
+# if __name__ == "__main__":
+#
+#     async def main() -> None:
+#         async def my_fn(x: int) -> float:
+#             await asyncio.sleep(0.05)
+#             return 420 / (x - 69)
+#
+#         async def funner(range_start: int) -> None:
+#             for x in range(range_start, range_start + 10):
+#                 f = my_fn(x)
+#                 print(my_fn.n_idle_workers)
+#                 await asyncio.sleep(random.uniform(0.01, 0.1))
+#                 try:
+#                     print(f"result: {await f}")
+#                 except Exception as e:
+#                     print(f"error: {e}")
+#             print("done with", range_start)
+#
+#         tasks = [asyncio.create_task(funner(i * 10)) for i in range(10)]
+#         print("waiting for tasks")
+#         await asyncio.gather(*tasks)
+#         await my_fn.close()
+#         print("done")
+#
+#     asyncio.run(main())

@@ -2,18 +2,40 @@ from __future__ import annotations
 
 import asyncio
 from asyncio import CancelledError
-from asyncio.queues import (
-    LifoQueue as AsyncioLifoQueue,
-    PriorityQueue as AsyncioPriorityQueue,
-    Queue as AsyncioQueue,
-)
+from asyncio.queues import LifoQueue as AsyncioLifoQueue
+from asyncio.queues import PriorityQueue as AsyncioPriorityQueue
+from asyncio.queues import Queue as AsyncioQueue
 from collections.abc import AsyncIterable
-from typing import Any, Coroutine, TypeAlias, TypeVar
+from typing import Any, AsyncIterator, Coroutine, Iterable, TypeAlias, TypeVar
 
-from astream.protocols.queue import QueueProtocol
+from astream import Stream, ensure_async_iterator
 
 T = TypeVar("T")
 Coro: TypeAlias = Coroutine[Any, Any, T]
+
+
+class _CloseableQueueIterator(AsyncIterable[T]):
+    """An async iterator that yields items from a queue."""
+
+    def __init__(self, queue: CloseableQueue[T]) -> None:
+        self._queue = queue
+
+    def __aiter__(self) -> _CloseableQueueIterator[T]:
+        return self
+
+    async def __anext__(self) -> T:
+        try:
+            item = await self._queue.get()
+            self._queue.task_done()
+            return item
+        except CancelledError:
+            raise
+        except QueueExhausted:
+            self._queue.close()
+            raise StopAsyncIteration
+        except Exception as e:
+            self._queue.close()
+            raise e
 
 
 class QueueClosed(Exception):
@@ -24,7 +46,7 @@ class QueueExhausted(Exception):
     ...
 
 
-class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], QueueProtocol[T, T]):
+class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
     """A closeable version of the asyncio.Queue class.
 
     This class is a closeable version of the asyncio.Queue class.
@@ -45,7 +67,10 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], QueueProtocol[T, T]):
     _getters: list[asyncio.Future[None]]
     _finished: asyncio.Event
 
+    _queue: Iterable[T]
+
     _close_getters: list[asyncio.Future[T]]
+    _iter_queues: list[CloseableQueue[T]]
 
     def __init__(self, maxsize: int = 0) -> None:
         super().__init__(maxsize)
@@ -53,6 +78,7 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], QueueProtocol[T, T]):
         self._exhausted = asyncio.Event()
 
         self._close_getters = []
+        self._iter_queues = []
 
     async def put(self, item: T) -> None:
         """Put an item into the queue.
@@ -62,7 +88,9 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], QueueProtocol[T, T]):
         """
         if self.is_closed:
             raise QueueClosed()
-        return await super().put(item)
+        await super().put(item)
+        for iter_q in self._iter_queues:
+            iter_q.put_nowait(item)
 
     def put_nowait(self, item: T) -> None:
         """Put an item into the queue without blocking.
@@ -73,7 +101,9 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], QueueProtocol[T, T]):
         """
         if self.is_closed:
             raise QueueClosed()
-        return super().put_nowait(item)
+        super().put_nowait(item)
+        for iter_q in self._iter_queues:
+            iter_q.put_nowait(item)
 
     async def get(self) -> T:
         """Remove and return an item from the queue.
@@ -120,6 +150,9 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], QueueProtocol[T, T]):
         for putter in self._putters:
             putter.set_exception(QueueClosed())
 
+        for iter_q in self._iter_queues:
+            iter_q.close()
+
         if self._finished.is_set():
             self._set_exhausted()
 
@@ -142,16 +175,53 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], QueueProtocol[T, T]):
     async def wait_exhausted(self) -> None:
         await self._exhausted.wait()
 
-    def __aiter__(self) -> CloseableQueue[T]:
-        return self
+    def __aiter__(self) -> Stream[T]:
+        return Stream(self._aiter())
 
-    async def __anext__(self) -> T:
-        try:
-            item = await self.get()
-            self.task_done()
-            return item
-        except QueueExhausted:
-            raise StopAsyncIteration
+    async def _aiter(self) -> AsyncIterator[T]:
+        while True:
+            try:
+                item = await self.get()
+                self.task_done()
+                yield item
+            except QueueExhausted:
+                break
+
+    async def feed_from(
+        self,
+        source: Iterable[T] | AsyncIterable[T],
+        close_when_done: bool = False,
+    ) -> None:
+        """Feed items from an async iterator into the queue.
+
+        This method will feed items from the given async iterator into the queue. It will
+        automatically close the queue when the source is exhausted.
+
+        Args:
+            source: The async iterator to feed items from.
+            close_when_done: If True, the queue will be closed when the source is exhausted.
+        """
+        async for item in ensure_async_iterator(source):
+            await self.put(item)
+
+        if close_when_done:
+            self.close()
+
+    def __lshift__(self, other: Iterable[T] | AsyncIterable[T]) -> None:
+        """Feed items from an iterator or async iterator into the queue.
+
+        Args:
+            other: The async iterator to feed items from.
+        """
+        asyncio.create_task(self.feed_from(other))
+
+    def __rrshift__(self, other: Iterable[T] | AsyncIterable[T]) -> None:
+        """Feed items from an iterator or async iterator into the queue.
+
+        Args:
+            other: The async iterator to feed items from.
+        """
+        asyncio.create_task(self.feed_from(other))
 
     # def __repr__(self) -> str:
     #     return (
@@ -162,11 +232,11 @@ class CloseableQueue(AsyncioQueue[T], AsyncIterable[T], QueueProtocol[T, T]):
     #     )
 
 
-class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueue[T], QueueProtocol[T,T]):
+class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueue[T]):
     """A closeable version of PriorityQueue."""
 
 
-class CloseableLifoQueue(AsyncioLifoQueue[T], CloseableQueue[T], QueueProtocol[T,T]):
+class CloseableLifoQueue(AsyncioLifoQueue[T], CloseableQueue[T]):
     """A closeable version of LifoQueue."""
 
 

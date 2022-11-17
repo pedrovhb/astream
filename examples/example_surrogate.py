@@ -4,7 +4,7 @@ from operator import getitem
 
 from loguru import logger
 
-from astream import stream
+from astream import Stream
 from astream.experimental.partializer import F
 from astream.experimental.simple_surrogate import it
 from astream.stream_grouper import apredicate_map
@@ -28,12 +28,12 @@ async def group_f() -> None:
         x["max_speed"] *= 2
         return x
 
-    s = stream(data) / apredicate_map(
+    s = Stream(data) / apredicate_map(
         {
             F(it["n_wheels"] == 0): F(it["max_speed"]),
             F(it["n_wheels"] == 2): lambda x: {**x, "type": "bicycle"},
             F(it["n_wheels"] == 4): double_spd,
-            F(it["n_wheels"] > 4): F(it["vehicle"]),
+            it["n_wheels"] > 4: F(it["vehicle"]),
         }
     )
 

@@ -2,16 +2,10 @@ from __future__ import annotations
 
 import functools
 from collections import deque
-from typing import (
-    TypeVar,
-    Any,
-    ParamSpec,
-    Callable,
-    overload, cast,
-)
+from typing import Any, Callable, ParamSpec, TypeVar, cast, overload
 
 from astream import ensure_coro_fn
-from astream.protocols.type_aliases import CoroT, T, R
+from astream.protocols.type_aliases import CoroT, R, T
 
 A = TypeVar("A")
 B = TypeVar("B")
@@ -43,8 +37,6 @@ def compose_two(
         return await fn2_async(await fn1_async(*args, **kwargs))
 
     return _composed
-
-
 
 
 @overload

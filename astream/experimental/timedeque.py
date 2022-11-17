@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import timedelta
-from typing import Generic, TypeVar, Sequence, Iterator
+from typing import Generic, Iterator, Sequence, TypeVar
 
 from loguru import logger
-
 
 _T = TypeVar("_T")
 

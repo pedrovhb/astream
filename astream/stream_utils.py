@@ -1,36 +1,38 @@
 from __future__ import annotations
 
 import asyncio
-import functools
 from abc import abstractmethod
+from asyncio import Future
 from datetime import timedelta
-from itertools import chain
 from typing import (
     Any,
     AsyncIterable,
     AsyncIterator,
     Callable,
-    cast,
     Coroutine,
     Iterable,
     ParamSpec,
     Protocol,
-    runtime_checkable,
+    TypeAlias,
     TypeVar,
+    cast,
     overload,
+    runtime_checkable,
 )
 
-from astream import NoValueSentinel, SentinelType
-from astream import Stream
-from astream import ensure_async_iterator, ensure_coro_fn
+from astream import NoValueSentinel, SentinelType, ensure_async_iterator, ensure_coro_fn
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
+
+_CoroT: TypeAlias = Coroutine[Any, Any, _T]
 
 _P = ParamSpec("_P")
 
 _KT = TypeVar("_KT", contravariant=True)
 _VT = TypeVar("_VT", covariant=True)
+
+_ItemAndFut: TypeAlias = Future[tuple[_T, "_ItemAndFut[_T]"]]
 
 
 @runtime_checkable
@@ -42,41 +44,6 @@ class SupportsGetItem(Protocol[_KT, _VT]):
         ...
 
 
-@overload
-def stream(
-    fn: Iterable[_T] | AsyncIterable[_T],
-) -> Stream[_T]:
-    ...
-
-
-@overload
-def stream(
-    fn: Callable[_P, AsyncIterable[_T]] | Callable[_P, Iterable[_T]],
-) -> Callable[_P, Stream[_T]]:
-    ...
-
-
-def stream(
-    fn: Callable[_P, AsyncIterable[_T]]
-    | Callable[_P, Iterable[_T]]
-    | AsyncIterable[_T]
-    | Iterable[_T],
-) -> Callable[_P, Stream[_T]] | Stream[_T]:
-    """A decorator that turns a generator or async generator function into a stream."""
-
-    if isinstance(fn, AsyncIterable) or isinstance(fn, Iterable):
-        return Stream(fn)
-
-    _fn = fn
-
-    @functools.wraps(_fn)
-    def _wrapped(*args: _P.args, **kwargs: _P.kwargs) -> Stream[_T]:
-        return Stream(_fn(*args, **kwargs))
-
-    return _wrapped
-
-
-@stream
 async def aenumerate(iterable: AsyncIterable[_T], start: int = 0) -> AsyncIterator[tuple[int, _T]]:
     """An asynchronous version of `enumerate`."""
     async for item in iterable:
@@ -84,7 +51,6 @@ async def aenumerate(iterable: AsyncIterable[_T], start: int = 0) -> AsyncIterat
         start += 1
 
 
-@stream
 async def agetitem(
     iterable: AsyncIterable[SupportsGetItem[_KT, _VT]],
     key: _KT,
@@ -94,7 +60,6 @@ async def agetitem(
         yield item[key]
 
 
-@stream
 async def agetattr(
     iterable: AsyncIterable[object],
     name: str,
@@ -106,51 +71,178 @@ async def agetattr(
 
 def afilter(
     fn: Callable[[_T], Coroutine[Any, Any, bool]] | Callable[[_T], bool],
-    iterable: AsyncIterable[_T],
-) -> Stream[_T]:
+    iterable: AsyncIterable[_T] | Iterable[_T],
+) -> AsyncIterator[_T]:
     """An asynchronous version of `filter`."""
-    return Stream(iterable).afilter(fn)
+
+    async def _filter() -> AsyncIterator[_T]:
+        _fn = ensure_coro_fn(fn)
+        _iterable = ensure_async_iterator(iterable)
+        async for item in _iterable:
+            if await _fn(item):
+                yield item
+
+    return _filter()
+
+
+def atee(
+    iterable: AsyncIterable[_T] | Iterable[_T],
+    n: int = 2,
+) -> tuple[AsyncIterator[_T], ...]:
+    """An asynchronous version of `tee`."""
+
+    create_future = asyncio.get_running_loop().create_future
+
+    async def _tee_feeder() -> None:
+        async for item in ensure_async_iterator(iterable):
+            ks = tuple(futs.keys())
+            for fut in ks:
+                tee = futs.pop(fut)
+                futs[next_fut := create_future()] = tee
+                fut.set_result((item, next_fut))
+        for fut in futs:
+            fut.set_exception(StopAsyncIteration)
+
+    _feeder_for_tee = None
+
+    async def _tee(next_fut: _ItemAndFut[_T]) -> AsyncIterator[_T]:
+        nonlocal _feeder_for_tee
+        if _feeder_for_tee is None:
+            _feeder_for_tee = asyncio.create_task(_tee_feeder())
+
+        while True:
+            try:
+                item, next_fut = await next_fut
+            except StopAsyncIteration:
+                break
+            yield item
+
+    futs = {(f := create_future()): _tee(f) for _ in range(n)}
+
+    return tuple(futs.values())
+
+
+@overload
+def amap(
+    fn: Callable[[_T], _CoroT[_U]], iterable: AsyncIterable[_T] | Iterable[_T]
+) -> AsyncIterator[_U]:
+    ...
+
+
+@overload
+def amap(fn: Callable[[_T], _U], iterable: AsyncIterable[_T] | Iterable[_T]) -> AsyncIterator[_U]:
+    ...
 
 
 def amap(
     fn: Callable[[_T], Coroutine[Any, Any, _U]] | Callable[[_T], _U],
-    iterable: AsyncIterable[_T],
-) -> Stream[_U]:
+    iterable: AsyncIterable[_T] | Iterable[_T],
+) -> AsyncIterator[_U]:
     """An asynchronous version of `map`."""
-    return Stream(iterable).amap(fn)
+
+    async def _map() -> AsyncIterator[_U]:
+        _fn: Callable[[_T], _CoroT[_U]] = ensure_coro_fn(fn)
+        _iterable = ensure_async_iterator(iterable)
+        async for item in _iterable:
+            yield await _fn(item)
+
+    return _map()
+
+
+@overload
+def aflatmap(
+    fn: Callable[[AsyncIterable[_T]], AsyncIterable[_U]],
+    iterable: AsyncIterable[Iterable[_T]],
+) -> AsyncIterator[_U]:
+    ...
+
+
+@overload
+def aflatmap(
+    fn: Callable[[AsyncIterable[_T]], AsyncIterable[_U]],
+    iterable: AsyncIterable[AsyncIterable[_T]],
+) -> AsyncIterator[_U]:
+    ...
+
+
+@overload
+def aflatmap(
+    fn: Callable[[AsyncIterable[_T]], AsyncIterable[_U]],
+    iterable: Iterable[Iterable[_T]],
+) -> AsyncIterator[_U]:
+    ...
+
+
+@overload
+def aflatmap(
+    fn: Callable[[AsyncIterable[_T]], AsyncIterable[_U]],
+    iterable: Iterable[AsyncIterable[_T]],
+) -> AsyncIterator[_U]:
+    ...
 
 
 def aflatmap(
-    fn: Callable[[_T], Coroutine[Any, Any, Iterable[_U]]]
-    | Callable[[_T], AsyncIterable[_U]]
-    | Callable[[_T], Iterable[_U]],
-    iterable: AsyncIterable[_T],
-) -> Stream[_U]:
-    """An asynchronous version of `flatmap`."""
-    return Stream(iterable).aflatmap(fn)  # type: ignore
+    fn: Callable[[AsyncIterable[_T]], AsyncIterable[_U]],
+    iterable: AsyncIterable[Iterable[_T]]
+    | AsyncIterable[AsyncIterable[_T]]
+    | Iterable[Iterable[_T]]
+    | Iterable[AsyncIterable[_T]],
+) -> AsyncIterator[_U]:
+    async def _flatmap() -> AsyncIterator[_U]:
+        _fn = ensure_coro_fn(fn)
+        _iterable = ensure_async_iterator(iterable)
+        async for item in _iterable:
+            fn_iter = await _fn(item)
+            async for subitem in ensure_async_iterator(fn_iter):
+                yield subitem
+
+    return _flatmap()
 
 
-arange = stream(range)
-
-
-@stream
 async def arange_delayed(
     start: int,
     stop: int | None = None,
     step: int = 1,
-    delay: timedelta = timedelta(seconds=0.2),
+    delay: timedelta | float = timedelta(seconds=0.2),
 ) -> AsyncIterator[int]:
+    """An asynchronous version of `range` with a delay between each item."""
+    _delay = delay.total_seconds() if isinstance(delay, timedelta) else delay
     if stop is None:
         stop = start
         start = 0
     for i in range(start, stop, step):
         yield i
-        await asyncio.sleep(delay.total_seconds())
+        await asyncio.sleep(_delay)
 
 
-@stream
-async def amerge(*async_iters: AsyncIterable[_T]) -> AsyncIterator[_T]:
-    """Merge multiple async iterators into one, yielding items as they are received.
+async def arange(start: int, stop: int | None = None, step: int = 1) -> AsyncIterator[int]:
+    """An asynchronous version of `range`.
+
+    Args:
+        start: The start of the range.
+        stop: The end of the range.
+        step: The step of the range.
+
+    Yields:
+        The next item in the range.
+
+    Examples:
+        >>> async def main():
+        ...     async for i in arange(5):
+        ...         print(i)
+        >>> asyncio.run(main())
+        0
+        1
+        2
+        3
+        4
+    """
+    async for i in arange_delayed(start, stop, step, delay=0):
+        yield i
+
+
+def amerge(*async_iters: Iterable[_T] | AsyncIterable[_T]) -> AsyncIterator[_T]:
+    """Merge multiple iterables or async iterables into one, yielding items as they are received.
 
     Args:
         async_iters: The async iterators to merge.
@@ -161,11 +253,11 @@ async def amerge(*async_iters: AsyncIterable[_T]) -> AsyncIterator[_T]:
     Examples:
         >>> async def a():
         ...     for i in range(3):
-        ...         await asyncio.sleep(0.025)
+        ...         await asyncio.sleep(0.07)
         ...         yield i
         >>> async def b():
         ...     for i in range(100, 106):
-        ...         await asyncio.sleep(0.01)
+        ...         await asyncio.sleep(0.03)
         ...         yield i
         >>> async def demo_amerge():
         ...     async for item in amerge(a(), b()):
@@ -181,27 +273,30 @@ async def amerge(*async_iters: AsyncIterable[_T]) -> AsyncIterator[_T]:
         105
         2
     """
-    futs: dict[asyncio.Future[_T], AsyncIterator[_T]] = {}
-    for it in async_iters:
-        async_it = aiter(it)
-        fut = asyncio.ensure_future(anext(async_it))
-        futs[fut] = async_it
 
-    while futs:
-        done, _ = await asyncio.wait(futs, return_when=asyncio.FIRST_COMPLETED)
-        for done_fut in done:
-            try:
-                yield done_fut.result()
-            except StopAsyncIteration:
-                pass
-            else:
-                fut = asyncio.ensure_future(anext(futs[done_fut]))
-                futs[fut] = futs[done_fut]
-            finally:
-                del futs[done_fut]
+    async def _inner() -> AsyncIterator[_T]:
+        futs: dict[asyncio.Future[_T], AsyncIterator[_T]] = {}
+        for it in async_iters:
+            async_it = ensure_async_iterator(it)
+            fut = asyncio.ensure_future(anext(async_it))
+            futs[fut] = async_it
+
+        while futs:
+            done, _ = await asyncio.wait(futs, return_when=asyncio.FIRST_COMPLETED)
+            for done_fut in done:
+                try:
+                    yield done_fut.result()
+                except StopAsyncIteration:
+                    pass
+                else:
+                    fut = asyncio.ensure_future(anext(futs[done_fut]))
+                    futs[fut] = futs[done_fut]
+                finally:
+                    del futs[done_fut]
+
+    return _inner()
 
 
-@stream
 async def ascan(
     fn: Callable[[_T, _U], Coroutine[Any, Any, _T]] | Callable[[_T, _U], _T],
     iterable: AsyncIterable[_U],
@@ -242,93 +337,141 @@ async def ascan(
         yield crt
 
 
-async def areduce(
-    fn: Callable[[_T, _U], Coroutine[Any, Any, _T]] | Callable[[_T, _U], _T],
-    iterable: AsyncIterable[_U],
-    initial: _T | SentinelType = NoValueSentinel,
-) -> _T:
-    """An asynchronous version of `reduce`.
+@overload
+def aflatten(iterable: AsyncIterator[Iterable[_T]]) -> AsyncIterator[_T]:
+    ...
+
+
+@overload
+def aflatten(iterable: AsyncIterator[AsyncIterable[_T]]) -> AsyncIterator[_T]:
+    ...
+
+
+async def aflatten(
+    iterable: AsyncIterator[Iterable[_T]] | AsyncIterator[AsyncIterable[_T]],
+) -> AsyncIterator[_T]:
+    """Unpacks an async iterator of iterables or async iterables into a flat async iterator."""
+    async for item in iterable:
+        async for subitem in ensure_async_iterator(item):
+            yield subitem
+
+
+async def aconcatenate(
+    *iterables: Iterable[_T] | AsyncIterable[_T],
+) -> AsyncIterator[_T]:
+    """Concatenates multiple async iterators, yielding all items from the first, then all items
+    from the second, etc.
+    """
+    for iterable in iterables:
+        async for item in ensure_async_iterator(iterable):
+            yield item
+
+
+async def arepeat(iterable: Iterable[_T] | AsyncIterable[_T], times: int) -> AsyncIterator[_T]:
+    """Repeats an async iterator `times` times."""
+    tees = atee(ensure_async_iterator(iterable), times)
+    for tee in tees:
+        async for item in tee:
+            yield item
+
+
+async def azip(
+    *iterables: Iterable[_T] | AsyncIterable[_T],
+) -> AsyncIterator[tuple[_T, ...]]:
+    """An asynchronous version of `zip`.
 
     Args:
-        fn: The function to reduce with.
-        iterable: The iterable to reduce.
-        initial: The initial value to reduce with.
+        *iterables: The iterables to zip.
 
-    Returns:
-        The reduced value.
+    Yields:
+        The zipped values.
 
     Examples:
-        >>> async def demo_areduce():
-        ...     print(await areduce(lambda a, b: a + b, arange(5)))
-        >>> asyncio.run(demo_areduce())
-        10
-
-        >>> async def demo_areduce():
-        ...     print(await areduce(lambda a, b: a + b, arange(5), 5))
-        >>> asyncio.run(demo_areduce())
-        15
+        >>> async def demo_azip():
+        ...     async for it in azip(arange(5), arange(5, 10)):
+        ...         print(it)
+        >>> asyncio.run(demo_azip())
+        (0, 5)
+        (1, 6)
+        (2, 7)
+        (3, 8)
+        (4, 9)
     """
-    _fn_async = ensure_coro_fn(fn)
-    _it_async = ensure_async_iterator(iterable)
-
-    if initial is NoValueSentinel:
-        initial = await anext(_it_async)  # type: ignore
-    crt = cast(_T, initial)
-
-    async for item in _it_async:
-        crt = await _fn_async(crt, item)  # type: ignore
-    return crt
+    async_iterables = tuple(ensure_async_iterator(it) for it in iterables)
+    while True:
+        try:
+            items = await asyncio.gather(*(anext(it) for it in async_iterables))
+        except StopAsyncIteration:
+            break
+        else:
+            yield tuple(items)
 
 
-NoData = object()
+@overload
+def azip_longest(
+    *iterables: Iterable[_T] | AsyncIterable[_T],
+    fillvalue: None = ...,
+) -> AsyncIterator[tuple[_T | None, ...]]:
+    ...
 
 
-def dotget(path: str) -> Callable[[Any], Iterable[Any]]:
-    def _adotget(p: str, *objs: Any) -> Any:
-        if not p:
-            yield from objs
+@overload
+def azip_longest(
+    *iterables: Iterable[_T] | AsyncIterable[_T],
+    fillvalue: _T = ...,
+) -> AsyncIterator[tuple[_T, ...]]:
+    ...
 
-        part, parts = p.split(".", maxsplit=1) if "." in p else (p, "")
 
-        matches = []
-        for obj in objs:
-
-            match obj:
-                case dict() if part in obj:
-                    matches.append(_adotget(parts, obj[part]))
-                case list() if part.isdigit() and int(part) < len(obj):
-                    matches.append(_adotget(parts, obj[int(part)]))
-                case dict() if part == "*":
-                    for v in obj.values():
-                        matches.append(_adotget(parts, v))
-                case list() if part == "*":
-                    for v in obj:
-                        matches.append(_adotget(parts, v))
-                case _ if (result := getattr(obj, part, NoData)) is not NoData:
-                    matches.append(_adotget(parts, result))
-                case _:
-                    pass
-
-        yield from chain.from_iterable(matches)
-
-    def _call(*objs: Any) -> Any:
-        return _adotget(path, *objs)
-
-    return _call
+async def azip_longest(
+    *iterables: Iterable[_T] | AsyncIterable[_T],
+    fillvalue: _T | None = None,
+) -> AsyncIterator[tuple[_T | None, ...]]:
+    """An asynchronous version of `zip_longest`."""
+    async_iterables = [ensure_async_iterator(it) for it in iterables]
+    while True:
+        items = await asyncio.gather(*(anext(it, NoValueSentinel) for it in async_iterables))
+        if all(item is NoValueSentinel for item in items):
+            break
+        yield tuple(item if item is not NoValueSentinel else fillvalue for item in items)
 
 
 __all__ = (
-    "stream",
     "aenumerate",
+    "aconcatenate",
     "agetitem",
     "agetattr",
     "afilter",
     "amap",
     "aflatmap",
+    "arepeat",
     "arange",
+    "atee",
     "arange_delayed",
     "amerge",
     "ascan",
-    "areduce",
-    "dotget",
+    "aflatten",
 )
+
+if __name__ == "__main__":
+
+    async def demo() -> None:
+        async for i in aenumerate(arange(10, 20)):
+            print(i)
+
+        async for i in aenumerate(arange(10), 5):
+            print(i)
+
+        (a, b), c = atee(arange(10, 15), 2), arange(15, 25)
+        async for j in a:
+            print("a", j)
+        async for j in b:
+            print("b", j)
+        async for j in c:
+            print("c", j)
+
+        (a, b), c = atee(arange(10, 15), 2), arange(15, 25)
+        async for tup in azip_longest(a, b, c, fillvalue=-1):
+            print(tup)
+
+    asyncio.run(demo())

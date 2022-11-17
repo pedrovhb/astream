@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from astream.stream import Stream
+from astream import Stream
 from astream.stream_grouper import StreamGrouper
 from astream.stream_utils import arange
 
