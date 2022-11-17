@@ -29,7 +29,6 @@ from astream.stream_utils import (
     aflatmap,
     amap,
     amerge,
-    arange,
     arepeat,
     atee,
 )
@@ -321,7 +320,6 @@ def stream(
     """Create a stream from an iterable or async iterable, or decorate a function to make it
     return a Stream.
     """
-    print(async_iterable_or_fn)
 
     if inspect.isasyncgenfunction(async_iterable_or_fn):
         _async_gen = async_iterable_or_fn

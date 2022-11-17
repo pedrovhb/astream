@@ -5,6 +5,8 @@ import asyncio
 import pytest
 
 from astream import closeable_queue
+from astream.closeable_queue import CloseableQueue
+
 
 # Test the CloseableQueue class in isolation
 

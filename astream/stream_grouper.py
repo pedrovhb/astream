@@ -216,6 +216,7 @@ def _apredicate_map(
     async def _predicate_checker(item: _T) -> None:
         predicates_matched = []
         for predicate, fn in async_predicate_map.items():
+
             if isinstance(pred_fn := predicate, SentinelType):
                 predicate_true = True  # Default predicate always matches
             else:
@@ -243,7 +244,7 @@ def _apredicate_map(
     return Stream(output_queue)
 
 
-def apredicate_map(
+def apredicate_multi_map(
     mapping_functions: Mapping[UnaryFn[_T, bool] | _DefaultT, UnaryFn[_T, _U]],
 ) -> StreamMappable[_T, _U]:
     @functools.wraps(_apredicate_map)
@@ -254,10 +255,10 @@ def apredicate_map(
     return cast(StreamMappable[_T, _U], _partial)
 
 
-def apredicate_match_map(
+def apredicate_map(
     mapping_functions: Mapping[UnaryFn[_T, bool] | _DefaultT, UnaryFn[_T, _U]]
 ) -> StreamMappable[_T, _U]:
-    @functools.wraps(_apredicate_map)
+    # @functools.wraps(_apredicate_map)
     def _partial(stream: AsyncIterable[_T]) -> Stream[_U]:
         return _apredicate_map(stream, mapping_functions, stop_after_first_match=True)
 
@@ -326,22 +327,22 @@ if __name__ == "__main__":
 
         s_verify = (
             await (
-                amerge(arange_delayed(100), arange_delayed(100, 200))
-                / apredicate_map(
+                    amerge(arange_delayed(100), arange_delayed(100, 200))
+                    / apredicate_multi_map(
                     {
                         is_mod_three: to_streeeng,
                         Default: to_streeeeeeeeeeng,
                     },
                 )
-                / rev_strin
-                / agroup_map(
+                    / rev_strin
+                    / agroup_map(
                     first_character,
                     {
                         ".": say_dot,
                         Default: say_dah,
                     },
                 )
-                / F(str.split)(sep="1")
+                    / F(str.split)(sep="1")
             )
             .aflatmap(lambda x: x)
             .amap(print)
@@ -359,6 +360,6 @@ if __name__ == "__main__":
 __all__ = (
     "StreamGrouper",
     "agroup_map",
+    "apredicate_multi_map",
     "apredicate_map",
-    "apredicate_match_map",
 )

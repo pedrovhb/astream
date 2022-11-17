@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import astream.stream_utils as pure
 
-from .stream import *
 from .utils import *
+import astream.stream_utils as pure
+from .stream import *
 
 aenumerate = stream(pure.aenumerate)
 aconcatenate = stream(pure.aconcatenate)
@@ -22,3 +22,4 @@ unpack = stream(pure.aflatten)
 
 from . import experimental
 from .worker_pool import *
+from .stream_grouper import *

@@ -1242,6 +1242,14 @@ python-versions = ">=3.6"
 plugins = ["importlib-metadata"]
 
 [[package]]
+name = "pyheat"
+version = "0.2"
+description = "OpenGL Heatmap Library"
+category = "main"
+optional = false
+python-versions = "*"
+
+[[package]]
 name = "pylint"
 version = "2.15.5"
 description = "python code static checker"
@@ -1689,7 +1697,7 @@ python-versions = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,>=2.7"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "157ef3c6275acf733c5ec69b2b8c1f31ce89a59f9ce28c9f3b33dcdfe3b7b98f"
+content-hash = "7f38ccadb936ebcbcf171183cf9fbda82ec9da15b7f86eac98b73320bd85cdd1"
 
 [metadata.files]
 ansicon = [
@@ -2355,6 +2363,9 @@ pyflakes = [
 pygments = [
     {file = "Pygments-2.13.0-py3-none-any.whl", hash = "sha256:f643f331ab57ba3c9d89212ee4a2dabc6e94f117cf4eefde99a0574720d14c42"},
     {file = "Pygments-2.13.0.tar.gz", hash = "sha256:56a8508ae95f98e2b9bdf93a6be5ae3f7d8af858b43e02c5a2ff083726be40c1"},
+]
+pyheat = [
+    {file = "PyHeat-0.2.tar.gz", hash = "sha256:b62e1b2d54e9ae981109b606efd08b5857392c3501a00d17655fe5b106313f89"},
 ]
 pylint = [
     {file = "pylint-2.15.5-py3-none-any.whl", hash = "sha256:c2108037eb074334d9e874dc3c783752cc03d0796c88c9a9af282d0f161a1004"},

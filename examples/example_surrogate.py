@@ -7,7 +7,7 @@ from loguru import logger
 from astream import Stream
 from astream.experimental.partializer import F
 from astream.experimental.simple_surrogate import it
-from astream.stream_grouper import apredicate_map
+from astream.stream_grouper import apredicate_multi_map
 
 
 async def group_f() -> None:
@@ -28,7 +28,7 @@ async def group_f() -> None:
         x["max_speed"] *= 2
         return x
 
-    s = Stream(data) / apredicate_map(
+    s = Stream(data) / apredicate_multi_map(
         {
             F(it["n_wheels"] == 0): F(it["max_speed"]),
             F(it["n_wheels"] == 2): lambda x: {**x, "type": "bicycle"},

@@ -98,18 +98,13 @@ def atee(
             ks = tuple(futs.keys())
             for fut in ks:
                 tee = futs.pop(fut)
-                futs[next_fut := create_future()] = tee
+                next_fut = create_future()
+                futs[next_fut] = tee
                 fut.set_result((item, next_fut))
         for fut in futs:
             fut.set_exception(StopAsyncIteration)
 
-    _feeder_for_tee = None
-
     async def _tee(next_fut: _ItemAndFut[_T]) -> AsyncIterator[_T]:
-        nonlocal _feeder_for_tee
-        if _feeder_for_tee is None:
-            _feeder_for_tee = asyncio.create_task(_tee_feeder())
-
         while True:
             try:
                 item, next_fut = await next_fut
@@ -118,7 +113,7 @@ def atee(
             yield item
 
     futs = {(f := create_future()): _tee(f) for _ in range(n)}
-
+    asyncio.create_task(_tee_feeder())
     return tuple(futs.values())
 
 

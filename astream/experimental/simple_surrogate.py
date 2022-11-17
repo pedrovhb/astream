@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from copy import copy
 from dataclasses import dataclass, field
-from functools import partialmethod
-from types import SimpleNamespace
+from functools import partialmethod, cached_property
+from types import SimpleNamespace, CodeType
 from typing import *
 
-from astream import Stream
+from executing import executing
+from sorcery.core import FrameInfo
+
+from astream import Stream, amap
 
 
 class SurrogateOperation(NamedTuple):
@@ -163,4 +166,254 @@ class SimpleSurrogate:
         return stream.amap(self.surrogate_get_partial())  # todo - fix
 
 
-it = SimpleSurrogate()
+import asyncio
+import inspect
+from types import SimpleNamespace
+
+from typing import *
+
+P = ParamSpec("P")
+P2 = ParamSpec("P2")
+T = TypeVar("T")
+U = TypeVar("U")
+R = TypeVar("R")
+
+# CoroT = TypeVar("CoroT", bound=Coroutine[Any, Any, Any])
+# CoroT = TypeVar("CoroT", bound=Coroutine[Any, Any, Any])
+T_contra = TypeVar("T_contra", contravariant=True)
+T_co = TypeVar("T_co", covariant=True)
+CoroT: TypeAlias = Coroutine[Any, Any, T_co]
+SyncOrAsyncResult: TypeAlias = CoroT[T_co] | T_co
+
+
+@overload
+def takes_sync_or_async(fn: Callable[P, CoroT[T]]) -> Callable[P, CoroT[T]]:
+    ...
+
+
+@overload
+def takes_sync_or_async(fn: Callable[P, T]) -> Callable[P, CoroT[T]]:
+    ...
+
+
+def takes_sync_or_async(
+    fn: Callable[P, Coroutine[Any, Any, T]] | Callable[P, T]
+) -> Callable[P, Coroutine[Any, Any, T]]:
+    if inspect.iscoroutinefunction(fn):
+        return fn
+    else:
+        _fn = cast(Callable[P, T], fn)
+
+        async def _async_fn(*args: P.args, **kwargs: P.kwargs) -> T:
+            return _fn(*args, **kwargs)
+
+        return _async_fn
+
+
+async def async_fn(a: str, b: int) -> float:
+    print("async fn")
+    return float(a) * b
+
+
+def sync_fn(a: int, b: str) -> bytes:
+    print("sync fn")
+    return b.encode() * a
+
+
+async def main() -> None:
+    async_fn_ = takes_sync_or_async(async_fn)
+    sync_fn_ = takes_sync_or_async(sync_fn)
+    print(await async_fn_("1", 2))
+    print(await sync_fn_(2, "a"))
+
+
+from sorcery import spell
+
+
+
+
+class SorcerySurrogate:
+    def __init__(self, expr="") -> None:
+        self._expr = expr
+
+    @spell
+    def __call__(self, frame_info, *args, **kwargs):
+        print("call", frame_info, args, kwargs, self.id)
+        locs = locals() | frame_info.executing.frame.f_locals
+        globs = globals() | frame_info.executing.frame.f_globals
+        sentinel = object()
+
+        if args or kwargs:
+            x = kwargs.get("it", sentinel)
+            if x is sentinel:
+                x = args[0]
+        else:
+            x = ()
+
+        locs["it"] = x
+
+        if self._expr == "":
+            return x
+
+        # print(f"{self._expr=}")
+        # return eval(self._expr, globs, locs)
+        # todo - switch with `compile` and `exec` for performance
+        # todo - try to cache accessing frame_info at all
+        return eval(self._compiled_expr, globs, locs)
+
+    @cached_property
+    def _compiled_expr(self) -> CodeType:
+        return compile(self._expr, "<string>", "eval")
+
+    @spell
+    def _do_get_expr_spell(self, frame_info: FrameInfo, *args, **kwargs):
+        expr = self._get_expr(frame_info)
+        return SorcerySurrogate(expr=expr)
+
+    def _get_expr(self, frame_info: FrameInfo) -> str:
+        call = frame_info.call
+        line_no, end_lineno, col_offset, end_col_offset = (
+            call.lineno,
+            call.end_lineno,
+            call.col_offset,
+            call.end_col_offset,
+        )
+        if line_no == end_lineno:
+            line = frame_info.executing.source.lines[line_no - 1]
+            expr = line[col_offset:end_col_offset]
+        else:
+            raise NotImplementedError
+        assert isinstance(expr, str)
+        return expr
+
+    @spell  # type: ignore
+    def __getattr__(self, frame_info: FrameInfo, item: str) -> Any:
+        if item in ("__qualname__", "__name__", "__annotations__"):
+            return super().__getattribute__(item)
+
+        return SorcerySurrogate(expr=self._get_expr(frame_info))
+    @spell  # type: ignore
+    def __setattr__(self, frame_info: FrameInfo, item: str, value: Any) -> Any:
+        # print("setattr", item, value)
+        if item in ("_expr",):
+            return super().__setattr__(item, value)
+
+        return SorcerySurrogate(expr=self._get_expr(frame_info))
+
+    def __hash__(self) -> int:
+        return hash(id(self))
+
+    # async def __stream_map__(self, stream: Stream[Any]) -> Stream[Any]:
+    #     print("stream map", self._expr, stream)
+    #     return amap(self, stream)  # todo - fix
+
+    __getitem__ = _do_get_expr_spell
+    __setitem__ = _do_get_expr_spell
+    __delitem__ = _do_get_expr_spell
+    __add__ = _do_get_expr_spell
+    __radd__ = _do_get_expr_spell
+    __sub__ = _do_get_expr_spell
+    __rsub__ = _do_get_expr_spell
+    __mul__ = _do_get_expr_spell
+    __rmul__ = _do_get_expr_spell
+    __matmul__ = _do_get_expr_spell
+    __rmatmul__ = _do_get_expr_spell
+    __truediv__ = _do_get_expr_spell
+    __rtruediv__ = _do_get_expr_spell
+    __floordiv__ = _do_get_expr_spell
+    __rfloordiv__ = _do_get_expr_spell
+    __mod__ = _do_get_expr_spell
+    __rmod__ = _do_get_expr_spell
+    __divmod__ = _do_get_expr_spell
+    __rdivmod__ = _do_get_expr_spell
+    __pow__ = _do_get_expr_spell
+    __rpow__ = _do_get_expr_spell
+    __lshift__ = _do_get_expr_spell
+    __rshift__ = _do_get_expr_spell
+    __rrshift__ = _do_get_expr_spell
+    __rlshift__ = _do_get_expr_spell
+    __and__ = _do_get_expr_spell
+    __rand__ = _do_get_expr_spell
+    __or__ = _do_get_expr_spell
+    __ror__ = _do_get_expr_spell
+    __xor__ = _do_get_expr_spell
+    __rxor__ = _do_get_expr_spell
+    __iadd__ = _do_get_expr_spell
+    __isub__ = _do_get_expr_spell
+    __imul__ = _do_get_expr_spell
+    __imatmul__ = _do_get_expr_spell
+    __itruediv__ = _do_get_expr_spell
+    __ifloordiv__ = _do_get_expr_spell
+    __imod__ = _do_get_expr_spell
+    __ipow__ = _do_get_expr_spell
+    __ilshift__ = _do_get_expr_spell
+    __irshift__ = _do_get_expr_spell
+    __iand__ = _do_get_expr_spell
+    __ior__ = _do_get_expr_spell
+    __ixor__ = _do_get_expr_spell
+    __neg__ = _do_get_expr_spell
+    __pos__ = _do_get_expr_spell
+    __abs__ = _do_get_expr_spell
+    __invert__ = _do_get_expr_spell
+    __complex__ = _do_get_expr_spell
+    __int__ = _do_get_expr_spell
+    __float__ = _do_get_expr_spell
+    __round__ = _do_get_expr_spell
+    __trunc__ = _do_get_expr_spell
+    __floor__ = _do_get_expr_spell
+    __ceil__ = _do_get_expr_spell
+    __enter__ = _do_get_expr_spell
+    __exit__ = _do_get_expr_spell
+    __await__ = _do_get_expr_spell
+    __aiter__ = _do_get_expr_spell
+    __anext__ = _do_get_expr_spell
+    __aenter__ = _do_get_expr_spell
+    __aexit__ = _do_get_expr_spell
+    __len__ = _do_get_expr_spell
+    __iter__ = _do_get_expr_spell
+    __eq__ = _do_get_expr_spell
+    __ne__ = _do_get_expr_spell
+    __lt__ = _do_get_expr_spell
+    __le__ = _do_get_expr_spell
+    __gt__ = _do_get_expr_spell
+    __ge__ = _do_get_expr_spell
+
+    __contains__ = _do_get_expr_spell
+    __missing__ = _do_get_expr_spell
+
+    # __index__ = lambda *args, **kwargs: 1
+    # __str__ = lambda *args, **kwargs: "1"
+
+
+
+it = SorcerySurrogate()
+f = 1 + 2
+abc = 1 + it + 1 * 4
+n = 100
+
+dd = it[2].something
+
+target = [12, 34, SimpleNamespace(some=3, something=47)]
+
+print(f"val is {dd(target)}")
+
+from astream import stream, apredicate_map, arange
+
+d = ({"abc": [0, SimpleNamespace(some=3, something=i, other={"cde": i ** 7})]} for i in range(20))
+
+async def main() -> None:
+    async for x in stream(d) / apredicate_map(
+        {
+            it["abc"][1].something % 2 == 0: it["abc"][1].something,
+            it["abc"][1].something % 3 == 0: it["abc"][1].other["cde"],
+            (it["abc"]): it["abc"][1].something,
+        }
+    ) / (lambda ax: ax + 2):
+        print(x)
+
+
+asyncio.run(main())
+
+abc(6)
+y = abc(5)
+print(y)

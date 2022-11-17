@@ -10,7 +10,7 @@ from loguru import logger
 from astream import arange, atee
 from astream.experimental.partializer import F
 from astream.experimental.simple_surrogate import it
-from astream.stream_grouper import Default, agroup_map, apredicate_map
+from astream.stream_grouper import Default, agroup_map, apredicate_multi_map
 
 client = httpx.AsyncClient()
 

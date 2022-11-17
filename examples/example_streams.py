@@ -8,10 +8,10 @@ from typing import TypeVar
 from rich import inspect
 from rich.console import Console
 
-from astream import arange, run_sync
+from astream import arange, run_sync, arange_delayed
 from astream.experimental.partializer import F
 from astream.stream import Stream, StreamMappable
-from astream.stream_grouper import Default, apredicate_map
+from astream.stream_grouper import Default, apredicate_multi_map, apredicate_map
 from astream.transformer_utils import dotget
 
 
@@ -101,7 +101,7 @@ async def _aflatten() -> None:
     def is_multiple_of(it: int, of: int) -> bool:
         return it % of == 0
 
-    s = arange(100) / apredicate_map(
+    s = arange(100) / apredicate_multi_map(
         {
             F(is_multiple_of)(of=2): lambda it: it * 2,
             F(is_multiple_of)(of=3): lambda it: it * 3,
@@ -109,16 +109,16 @@ async def _aflatten() -> None:
         }
     )
     s = (
-        arange(100)
-        / (lambda it: (it,))
-        / apredicate_map(
+            arange(100)
+            / (lambda it: (it,))
+            / apredicate_multi_map(
             {
                 (lambda n: n[0] % 3 == 0): lambda it: (*it, "fizz"),
                 (lambda n: n[0] % 5 == 0): lambda it: (*it, "buzz"),
                 Default: lambda it: it,
             }
         )
-        / (lambda it: f"{it[0]} {''.join(it[1:])}")
+            / (lambda it: f"{it[0]} {''.join(it[1:])}")
     )
 
     return [it async for it in s]
@@ -170,14 +170,21 @@ async def aflatten_example() -> None:
     def is_even(x: int) -> bool:
         return x % 2 == 0
 
-    st = Stream(to_range(10)) / mul_two // arange / spell_out
     # sm = +st.aclone()
+    import heartrate
 
-    async for item in st:
-        print(item)
-
-    # async for it in +st:
-    #     print(it)
+    heartrate.trace(browser=True)
+    while True:
+        st = Stream(arange_delayed(10, delay=0.1)) / mul_two // arange / spell_out
+        async for item in st / (
+            lambda abc: abc[1] + abc[2]
+        ) / str.strip % bool / apredicate_map(
+            {
+                lambda it: it.startswith("f"): str.upper,
+                Default: str.title,
+            }
+        ):
+            print(item)
 
 
 if __name__ == "__main__":
