@@ -71,15 +71,23 @@ class StreamCollector(Protocol[_T, _R]):
 
 class Stream(AsyncIterator[_T], Generic[_T]):
     @overload
-    def __init__(self, iterable: AsyncIterable[_T]) -> None:
+    def __init__(self, iterable: AsyncIterable[_T], name: str | None = ...) -> None:
         ...
 
     @overload
-    def __init__(self, iterable: Iterable[_T] | AsyncIterable[_T]) -> None:
+    def __init__(self, iterable: Iterable[_T] | AsyncIterable[_T], name: str | None = ...) -> None:
         ...
 
-    def __init__(self, iterable: Iterable[_T] | AsyncIterable[_T]) -> None:
+    def __init__(self, iterable: Iterable[_T] | AsyncIterable[_T], name: str | None = None) -> None:
         self._async_iterable = ensure_async_iterator(iterable)
+        self._name = name if name is not None else f"<stream {self._default_name()}>"
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def _default_name(self) -> str:
+        return f"{hash(self).to_bytes(8, 'big').hex()}"
 
     def __aiter__(self) -> AsyncIterator[_T]:
         return self
@@ -115,7 +123,14 @@ class Stream(AsyncIterator[_T], Generic[_T]):
             return NotImplemented
 
         cls = cast(Type[Stream[_R]], type(self))
-        return cls(amap(other, self))
+
+        if hasattr(other, "name"):
+            name = other.name
+        elif hasattr(other, "__name__"):
+            name = f"{self.name} / {other.__name__}"
+        else:
+            name = self.name + " / <unnamed>"
+        return cls(amap(other, self), name=name)
 
     @overload
     def __mod__(self, other: StreamFilterable[_T]) -> Stream[_T]:

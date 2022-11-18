@@ -5,20 +5,25 @@ from .utils import *
 import astream.stream_utils as pure
 from .stream import *
 
-aenumerate = stream(pure.aenumerate)
+
 aconcatenate = stream(pure.aconcatenate)
-agetitem = stream(pure.agetitem)
-agetattr = stream(pure.agetattr)
+aenumerate = stream(pure.aenumerate)
 afilter = stream(pure.afilter)
-amap = stream(pure.amap)
 aflatmap = stream(pure.aflatmap)
-arepeat = stream(pure.arepeat)
-arange = stream(pure.arange)
-atee = stream(pure.atee)
-arange_delayed = stream(pure.arange_delayed)
+aflatten = stream(pure.aflatten)
+agetattr = stream(pure.agetattr)
+agetitem = stream(pure.agetitem)
+amap = stream(pure.amap)
 amerge = stream(pure.amerge)
+arange = stream(pure.arange)
+arange_delayed = stream(pure.arange_delayed)
+arange_delayed_random = stream(pure.arange_delayed_random)
+arange_delayed_sine = stream(pure.arange_delayed_sine)
+arepeat = stream(pure.arepeat)
 ascan = stream(pure.ascan)
-unpack = stream(pure.aflatten)
+atee = stream(pure.atee)
+azip = stream(pure.azip)
+azip_longest = stream(pure.azip_longest)
 
 from . import experimental
 from .worker_pool import *

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import math
+import random
 from abc import abstractmethod
 from asyncio import Future
 from datetime import timedelta
@@ -208,6 +210,59 @@ async def arange_delayed(
     for i in range(start, stop, step):
         yield i
         await asyncio.sleep(_delay)
+
+
+async def arange_delayed_random(
+    start: int,
+    stop: int | None = None,
+    step: int = 1,
+    delay_min: timedelta | float = timedelta(seconds=0.02),
+    delay_max: timedelta | float = timedelta(seconds=0.3),
+    rate_variance: float = 0.1,
+) -> AsyncIterator[int]:
+    """An asynchronous version of `range` with a random delay between each item."""
+    _delay_min = delay_min.total_seconds() if isinstance(delay_min, timedelta) else delay_min
+    _delay_max = delay_max.total_seconds() if isinstance(delay_max, timedelta) else delay_max
+    rate = 1 / (_delay_min + _delay_max) / 2
+    rate_variance = rate * rate_variance
+
+    if stop is None:
+        stop = start
+        start = 0
+    for i in range(start, stop, step):
+        yield i
+        await asyncio.sleep(
+            random.uniform(
+                max(_delay_min, rate - rate_variance),
+                min(_delay_max, rate + rate_variance),
+            )
+        )
+        rate = rate + random.uniform(-rate_variance, rate_variance)
+
+
+async def arange_delayed_sine(
+    start: int,
+    stop: int | None = None,
+    step: int = 1,
+    delay_min: timedelta | float = timedelta(seconds=0.02),
+    delay_max: timedelta | float = timedelta(seconds=0.3),
+    rate: timedelta | float = timedelta(seconds=2),
+) -> AsyncIterator[int]:
+    """An asynchronous version of `range` with a random delay between each item."""
+    _delay_min = delay_min.total_seconds() if isinstance(delay_min, timedelta) else delay_min
+    _delay_max = delay_max.total_seconds() if isinstance(delay_max, timedelta) else delay_max
+    _rate = rate.total_seconds() if isinstance(rate, timedelta) else rate
+
+    delay_range = _delay_max - _delay_min
+
+    if stop is None:
+        stop = start
+        start = 0
+
+    for i in range(start, stop, step):
+        yield i
+        delay = _delay_min + delay_range * (math.sin(i / _rate) + 1) / 2
+        await asyncio.sleep(delay)
 
 
 async def arange(start: int, stop: int | None = None, step: int = 1) -> AsyncIterator[int]:
@@ -432,20 +487,24 @@ async def azip_longest(
 
 
 __all__ = (
-    "aenumerate",
     "aconcatenate",
-    "agetitem",
-    "agetattr",
+    "aenumerate",
     "afilter",
-    "amap",
     "aflatmap",
-    "arepeat",
-    "arange",
-    "atee",
-    "arange_delayed",
-    "amerge",
-    "ascan",
     "aflatten",
+    "agetattr",
+    "agetitem",
+    "amap",
+    "amerge",
+    "arange",
+    "arange_delayed",
+    "arange_delayed_random",
+    "arange_delayed_sine",
+    "arepeat",
+    "ascan",
+    "atee",
+    "azip",
+    "azip_longest",
 )
 
 if __name__ == "__main__":
