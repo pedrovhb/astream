@@ -5,6 +5,7 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import TypeVar
 
+import asyncio as asyncio
 from rich import inspect
 from rich.console import Console
 
@@ -12,6 +13,7 @@ from astream import arange, run_sync, arange_delayed
 from astream.experimental.partializer import F
 from astream.stream import Stream, StreamMappable
 from astream.stream_grouper import Default, apredicate_multi_map, apredicate_map
+from astream.subproc import Proc
 from astream.transformer_utils import dotget
 
 
@@ -109,16 +111,16 @@ async def _aflatten() -> None:
         }
     )
     s = (
-            arange(100)
-            / (lambda it: (it,))
-            / apredicate_multi_map(
+        arange(100)
+        / (lambda it: (it,))
+        / apredicate_multi_map(
             {
                 (lambda n: n[0] % 3 == 0): lambda it: (*it, "fizz"),
                 (lambda n: n[0] % 5 == 0): lambda it: (*it, "buzz"),
                 Default: lambda it: it,
             }
         )
-            / (lambda it: f"{it[0]} {''.join(it[1:])}")
+        / (lambda it: f"{it[0]} {''.join(it[1:])}")
     )
 
     return [it async for it in s]
@@ -176,15 +178,31 @@ async def aflatten_example() -> None:
     heartrate.trace(browser=True)
     while True:
         st = Stream(arange_delayed(10, delay=0.1)) / mul_two // arange / spell_out
-        async for item in st / (
-            lambda abc: abc[1] + abc[2]
-        ) / str.strip % bool / apredicate_map(
+        async for item in st / (lambda abc: abc[1] + abc[2]) / str.strip % bool / apredicate_map(
             {
                 lambda it: it.startswith("f"): str.upper,
                 Default: str.title,
             }
         ):
             print(item)
+
+    # For android
+    # package:/data/app/~~_6Hm0BCuyr_uMrBc65DBKw==/com.simplemobiletools.gallery-jF-48bOHm34ojGB0APcjdA==/base.apk=com.simplemobiletools.gallery
+
+
+async def main() -> None:
+    proc = await Proc.run_shell("sudo pm list packages -f")
+    async for line in proc.stdout_decoded:
+        _, path, package = line.rsplit("=", 1)
+        print(path, package)
+
+
+if __name__ == "__main__":
+    import asyncio
+    from astream import Stream
+    from astream.subproc import Proc
+
+    asyncio.run(main())
 
 
 if __name__ == "__main__":

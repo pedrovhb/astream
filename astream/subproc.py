@@ -74,12 +74,12 @@ class Proc(StreamLike[bytes], AsyncIterable[bytes]):
         return self.proc.stdin
 
     @property
-    def stdout(self) -> Stream[bytes]:
-        return Stream(self.proc.stdout)
+    def stdout(self) -> Stream[str]:
+        return Stream(self.proc.stdout) / bytes.strip / bytes.decode
 
     @property
-    def stderr(self) -> Stream[bytes]:
-        return Stream(self.proc.stderr)
+    def stderr(self) -> Stream[str]:
+        return Stream(self.proc.stderr) / bytes.strip / bytes.decode
 
     async def _raw_reader(self, stream: StreamReader) -> AsyncIterator[bytes]:
         while True:
@@ -105,19 +105,11 @@ class Proc(StreamLike[bytes], AsyncIterable[bytes]):
     stderr_with_separator = partialmethod(bytes_stream_split_separator)
 
     @property
-    def stdout_decoded(self) -> Stream[str]:
-        return Stream(self.proc.stdout) / bytes.strip / bytes.decode
-
-    @property
-    def stderr_decoded(self) -> Stream[str]:
-        return Stream(self.proc.stderr) / bytes.strip / bytes.decode
-
-    @property
     def merged_streams(self) -> Stream[bytes]:
         """Return lines from both stdout and stderr."""
         return self._merged_streams
 
-    def __iter__(self) -> tuple[Stream[bytes], Stream[bytes]]:
+    def __iter__(self) -> tuple[Stream[str], Stream[str]]:
         """Return stdout and stderr streams, to enable `stdout, stderr = Proc(...)`"""
         return self.stdout, self.stderr
 
@@ -293,7 +285,7 @@ if __name__ == "__main__":
         a = fd >> cat
         proc_rg << a
         print(a)
-        async for line in proc_rg.stdout_decoded:
+        async for line in proc_rg.stdout:
             print(line)
 
         out = await JpegRecompress.apply(
@@ -302,7 +294,7 @@ if __name__ == "__main__":
         )
 
         ims = await Proc.run_shell("fd -tf -e jpg . /home/pedro/projs/wp_dumper/bb_dumper/images")
-        st = ims.stdout_decoded / Path / (lambda p: (p, p.with_name("optimized_" + p.name)))
+        st = ims.stdout / Path / (lambda p: (p, p.with_name("optimized_" + p.name)))
         async for inp, out in st:
             res = await JpegRecompress.apply(inp, out)
             print(res)
