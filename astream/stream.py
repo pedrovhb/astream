@@ -70,6 +70,16 @@ class StreamCollector(Protocol[_T, _R]):
 
 
 class Stream(AsyncIterator[_T], Generic[_T]):
+    def __new__(
+        cls,
+        async_iterable: AsyncIterable[_T] | Iterable[_T],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Stream[_T]:
+        if isinstance(async_iterable, cls):
+            return async_iterable
+        return super().__new__(cls)
+
     @overload
     def __init__(self, iterable: AsyncIterable[_T], name: str | None = ...) -> None:
         ...
@@ -79,7 +89,7 @@ class Stream(AsyncIterator[_T], Generic[_T]):
         ...
 
     def __init__(self, iterable: Iterable[_T] | AsyncIterable[_T], name: str | None = None) -> None:
-        self._async_iterable = ensure_async_iterator(iterable)
+        self._async_iterator = ensure_async_iterator(iterable)
         self._name = name if name is not None else f"<stream {self._default_name()}>"
 
     @property
@@ -94,7 +104,7 @@ class Stream(AsyncIterator[_T], Generic[_T]):
 
     async def __anext__(self) -> _T:
         try:
-            return await self._async_iterable.__anext__()
+            return await self._async_iterator.__anext__()
         except StopAsyncIteration:
             raise StopAsyncIteration
 
@@ -247,10 +257,10 @@ class Stream(AsyncIterator[_T], Generic[_T]):
         return _collect()
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}({self._async_iterable!r})"
+        return f"{type(self).__name__}({self._async_iterator!r})"
 
     def __str__(self) -> str:
-        return f"{type(self).__name__}({self._async_iterable!s})"
+        return f"{type(self).__name__}({self._async_iterator!s})"
 
     def __await__(self) -> Generator[None, None, list[_T]]:
         async def _collect() -> list[_T]:
@@ -269,10 +279,8 @@ class Stream(AsyncIterator[_T], Generic[_T]):
         return cls(aconcatenate(other, self))
 
     def __mul__(self, other: int) -> Stream[_T]:
-        """Concatenate stream with itself multiple times."""
-        return type(self)(arepeat(self, other))
-
-    __rmul__ = __mul__
+        # todo - switch this out by the more useful starmap
+        pass
 
     def __pow__(self, other: Iterable[_U] | AsyncIterable[_U]) -> Stream[_T | _U]:
         """Merge a stream with another, yielding items from both as they arrive."""
@@ -282,8 +290,8 @@ class Stream(AsyncIterator[_T], Generic[_T]):
     __rpow__ = __pow__
 
     def aclone(self) -> Stream[_T]:
-        a, b = atee(self._async_iterable, 2)
-        self._async_iterable = a
+        a, b = atee(self._async_iterator, 2)
+        self._async_iterator = a
         return type(self)(b)
 
     amap = __truediv__

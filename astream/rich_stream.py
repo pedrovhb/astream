@@ -14,7 +14,7 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.segment import Segment
 
-from astream import NoValueSentinel, SentinelType, Stream, arange, iter_to_aiter
+from astream import NoValue, SentinelType, Stream, arange, iter_to_aiter
 from astream.stream_grouper import agroup_map
 from astream.stream_utils import aenumerate, amerge, arange_delayed
 
@@ -33,7 +33,7 @@ vertical_bar_characters = "▁▂▃▄▅▆▇█"
 
 class RichStream(Stream[_T]):
 
-    _latest_value: SentinelType | _T = NoValueSentinel
+    _latest_value: SentinelType | _T = NoValue
     _yielded_timestamps: list[datetime]
 
     def __init__(
@@ -58,7 +58,7 @@ class RichStream(Stream[_T]):
 
 class StatsInstrumenter(Generic[_T]):
 
-    _latest_value: SentinelType | _T = NoValueSentinel
+    _latest_value: SentinelType | _T = NoValue
     _yielded_timestamps: list[datetime]
 
     def __init__(self) -> None:

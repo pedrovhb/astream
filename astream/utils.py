@@ -18,8 +18,18 @@ class SentinelType:
     pass
 
 
-_NoValueSentinelT = NewType("_NoValueSentinelT", SentinelType)
-NoValueSentinel = _NoValueSentinelT(SentinelType())
+class NoValueT:
+    """A singleton sentinel value to indicate no value."""
+
+    instance: NoValueT
+
+    def __new__(cls, *args, **kwargs):
+        if not hasattr(cls, "instance"):
+            cls.instance = super().__new__(cls, *args, **kwargs)
+        return cls.instance
+
+
+NoValue = NoValueT()
 
 
 def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:
@@ -178,6 +188,6 @@ __all__ = (
     "ensure_async_iterator",
     "create_future",
     "SentinelType",
-    "_NoValueSentinelT",
-    "NoValueSentinel",
+    "NoValueT",
+    "NoValue",
 )

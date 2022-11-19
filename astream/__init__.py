@@ -24,6 +24,8 @@ ascan = stream(pure.ascan)
 atee = stream(pure.atee)
 azip = stream(pure.azip)
 azip_longest = stream(pure.azip_longest)
+bytes_stream_split_separator = stream(pure.bytes_stream_split_separator)
+with_exc_handler = stream(pure.with_exc_handler)
 
 from . import experimental
 from .worker_pool import *

@@ -61,7 +61,7 @@ class F(Generic[_T]):
 n = 7
 
 f = F[int]("it[4].denominator + 2 - n")
-print(x := f([1, 2, 3, 4, Fraction(1, 8)]))
+# print(x := f([1, 2, 3, 4, Fraction(1, 8)]))
 
 
 # from __future__ import annotations
