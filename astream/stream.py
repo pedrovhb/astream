@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import abc
 import inspect
 import itertools
+from abc import ABC
 from types import NotImplementedType
 from typing import (
     Any,
@@ -41,6 +43,63 @@ _T = TypeVar("_T")
 _T_co = TypeVar("_T_co", covariant=True)
 _U = TypeVar("_U")
 _CoroT: TypeAlias = Coroutine[Any, Any, _T]
+
+
+TransformerFunction = Callable[[AsyncIterable[_T]], AsyncIterable[_U]]
+
+
+class Transformer(Generic[_T, _U], ABC):
+    @overload
+    def __new__(cls, src: Iterable[_T], *args: Any, **kwargs: Any) -> SyncTransformer[_T, _U]:
+        ...
+
+    @overload
+    def __new__(cls, src: AsyncIterable[_T], *args: Any, **kwargs: Any) -> AsyncTransformer[_T, _U]:
+        ...
+
+    def __new__(
+        cls, src: AsyncIterable[_T] | Iterable[_T], *args: Any, **kwargs: Any
+    ) -> AsyncTransformer[_T, _U] | SyncTransformer[_T, _U]:
+        if isinstance(src, AsyncIterable):
+            return AsyncTransformer(src, *args, **kwargs)
+        elif isinstance(src, Iterable):
+            return SyncTransformer(src, *args, **kwargs)
+        else:
+            raise TypeError("src must be an AsyncIterable or Iterable")
+
+    @abc.abstractmethod
+    async def __aiter__(self) -> AsyncIterator[_U]:
+        ...
+
+
+class AsyncTransformer(Transformer[_T, _U]):
+    def __init__(self, src: AsyncIterable[_T], *args: Any, **kwargs: Any) -> None:
+        self._src = src
+
+    async def __aiter__(self) -> AsyncIterator[_U]:
+        async for item in self._src:
+            yield item
+
+
+class SyncTransformer(Transformer[_T, _U]):
+    def __init__(self, src: Iterable[_T], *args: Any, **kwargs: Any) -> None:
+        self._src = src
+
+    async def __aiter__(self) -> AsyncIterator[_U]:
+        for item in self._src:
+            yield item
+
+
+class Map(Generic[_T, _U], Transformer[_T, _U]):
+    def __init__(self, src: AsyncIterable[_T] | Iterable[_T]) -> None:
+        self._src = src
+
+    async def __aiter__(self) -> AsyncIterator[_U]:
+        async for item in self._src:
+            yield await self._fn(item)
+
+    def __call__(self, iterable: Iterable[_T] | AsyncIterable[_T]) -> AsyncIterable[_U]:
+        return amap(self._fn, iterable)
 
 
 @runtime_checkable
