@@ -20,12 +20,12 @@ from typing import (
     cast,
     overload,
     runtime_checkable,
-    Literal,
-    TypeGuard,
     Generic,
 )
 
-from astream import NoValue, SentinelType, ensure_async_iterator, ensure_coro_fn, NoValueT
+from rich import inspect
+
+from astream import NoValue, ensure_async_iterator, ensure_coro_fn, NoValueT
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -106,8 +106,10 @@ def atee(
                 next_fut = create_future()
                 futs[next_fut] = tee
                 fut.set_result((item, next_fut))
-        for fut in futs:
-            fut.set_exception(StopAsyncIteration)
+            for fut in futs:
+
+                inspect(fut, all=True)
+                fut.set_exception(StopAsyncIteration)
 
     async def _tee(next_fut: _ItemAndFut[_T]) -> AsyncIterator[_T]:
         while True:
@@ -712,12 +714,17 @@ __all__ = (
     "with_exc_handler",
 )
 
+
+def int_to_str(x: int) -> float:
+    return str(x)
+
+
 if __name__ == "__main__":
 
     async def demo() -> None:
         async for i in aenumerate(arange(10, 20)):
             print(i)
-
+            reveal_type(i)
         async for i in aenumerate(arange(10), 5):
             print(i)
 

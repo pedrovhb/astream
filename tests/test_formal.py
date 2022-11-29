@@ -5,7 +5,8 @@ from typing import AsyncIterable, Iterable, Callable, TypeAlias, Any, Coroutine,
 import pytest
 from loguru import logger
 
-from astream.formal import Map, FlatMap, Filter, FilterFalse
+# from astream.formal import Map, FlatMap, Filter, FilterFalse
+from astream.pyrest import Map, FlatMap, Filter, FilterFalse
 
 _T = TypeVar("_T")
 _CoroT: TypeAlias = Coroutine[Any, Any, _T]
@@ -47,7 +48,7 @@ async def test_map(
     fn: Callable[[int], int] | Callable[[int], _CoroT[int]],
     expected: Iterator[int],
 ) -> None:
-    async for i in Map(src, fn):
+    async for i in src / Map(fn):
         assert i == next(expected)
 
     with pytest.raises(StopIteration):
@@ -97,7 +98,7 @@ async def test_flat_map(
     fn: Callable[[int], Iterable[int]] | Callable[[int], AsyncIterable[int]],
     expected: Iterator[int],
 ) -> None:
-    async for i in FlatMap(src, fn):
+    async for i in src // FlatMap(fn):
         assert i == next(expected)
 
     with pytest.raises(StopIteration):
@@ -142,7 +143,7 @@ async def test_filter(
     fn: Callable[[int], bool] | Callable[[int], _CoroT[bool]],
     expected: Iterator[int],
 ) -> None:
-    async for i in Filter(src, fn):
+    async for i in src % Filter(fn):
         assert i == next(expected)
 
     with pytest.raises(StopIteration):
@@ -164,7 +165,7 @@ async def test_filter_not(
     fn: Callable[[int], bool] | Callable[[int], _CoroT[bool]],
     expected: Iterator[int],
 ) -> None:
-    async for i in FilterFalse(src, fn):
+    async for i in src % FilterFalse(fn):
         assert i == next(expected)
 
     with pytest.raises(StopIteration):

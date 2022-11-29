@@ -5,6 +5,7 @@ import asyncio
 import functools
 import inspect
 import itertools
+import random
 from abc import ABC
 from functools import cached_property
 from operator import methodcaller
@@ -29,10 +30,13 @@ from typing import (
     runtime_checkable,
     TYPE_CHECKING,
     Collection,
+    Final,
 )
 
-from astream import NoValueT, NoValue
-from astream.stream_utils import (
+from loguru import logger
+
+from .utils import NoValueT, NoValue
+from .stream_utils import (
     aconcatenate,
     afilter,
     aflatmap,
@@ -50,12 +54,20 @@ _T_co = TypeVar("_T_co", covariant=True)
 _T_contra = TypeVar("_T_contra", contravariant=True)
 _U = TypeVar("_U")
 _V = TypeVar("_V")
-_CoroT: TypeAlias = Coroutine[Any, Any, _T]
+_CoroT: TypeAlias = Coroutine[object, object, _T]
 
 
 TransformerFunction = Callable[[AsyncIterable[_T]], AsyncIterable[_U]]
 
-_TransformerT = TypeVar("_TransformerT", bound="Transformer[Any, Any]")
+_TransformerT = TypeVar("_TransformerT", bound="Transformer[object, object]")
+
+
+async def _pairwise(src: AsyncIterable[_T]) -> AsyncIterator[tuple[_T, _T]]:
+    prev: _T | NoValueT = NoValue
+    async for item in src:
+        if not isinstance(prev, NoValueT):
+            yield prev, item
+        prev = item
 
 
 def ensure_async_iterator(src: Iterable[_T] | AsyncIterable[_T]) -> AsyncIterator[_T]:
@@ -64,7 +76,7 @@ def ensure_async_iterator(src: Iterable[_T] | AsyncIterable[_T]) -> AsyncIterato
         return aiter(_async_src)
 
     elif isinstance(src, Iterable):
-        _sync_src = src
+        _sync_src: Iterable[_T] = src
 
         async def _aiter() -> AsyncIterator[_T]:
             for item in _sync_src:
@@ -95,13 +107,18 @@ def ensure_coroutine_function(
     if inspect.iscoroutinefunction(fn):
         return fn
     else:
-        _fn_sync = cast(Callable[P, _U], fn)
+        _fn_sync: Callable[P, _U] = cast(Callable[P, _U], fn)
 
         @functools.wraps(_fn_sync)
         async def _fn_async(*args: P.args, **kwargs: P.kwargs) -> _U:
             return _fn_sync(*args, **kwargs)
 
         return _fn_async
+
+
+class TransformableAsyncIterable(AsyncIterable[_T], Generic[_T], ABC):
+    def __transform__(self, transformer: Transformer[_T, _U]) -> AsyncIterable[_U]:
+        ...
 
 
 class Transformer(Generic[_T, _U], AsyncIterable[_U]):
@@ -121,16 +138,22 @@ class Transformer(Generic[_T, _U], AsyncIterable[_U]):
     def __aiter__(self) -> AsyncIterator[_U]:
         ...
 
-    @classmethod
-    def with_args(
-        cls: Type[_TransformerT],
-        *args: Any,
-        **kwargs: Any,
-    ) -> Callable[[Iterable[_T] | AsyncIterable[_T]], _TransformerT]:
-        def _make_transformer(src: Iterable[_T] | AsyncIterable[_T]) -> _TransformerT:
-            return cls(src, *args, **kwargs)
+    # @classmethod
+    # def with_args(
+    #     cls,
+    #     *args: Any,
+    #     **kwargs: Any,
+    # ) -> Callable[[Iterable[_T] | AsyncIterable[_T]], _TransformerT]:
+    #     def _make_transformer(src: Iterable[_T] | AsyncIterable[_T]) -> _TransformerT:
+    #         return cls(src, *args, **kwargs)
+    #
+    #     return _make_transformer
 
-        return _make_transformer
+    def __rmatmul__(self, other: AsyncIterable[_T]) -> AsyncIterable[_U]:
+        if isinstance(other, TransformableAsyncIterable):
+            return other.__transform__(self)
+        else:
+            return type(super())(other)
 
 
 class ApplyTransform(Transformer[_T, _U]):
@@ -365,7 +388,7 @@ class _TTTransformerT(Protocol[_T, _U]):
         ...
 
 
-class Stream(AsyncIterable[_T]):
+class Stream(TransformableAsyncIterable[_T], AsyncIterable[_T]):
     def __init__(
         self,
         src: Iterable[_T] | AsyncIterable[_T],
@@ -451,6 +474,12 @@ class Stream(AsyncIterable[_T]):
         new_stream.metadata.stream_graph_2.append((self, new_stream))
         return new_stream
 
+    def __transform__(self, transformer: _TTTransformerT[_T, _U]) -> Stream[_U]:
+        new_stream = Stream(transformer(self))
+        new_stream.metadata.stream_graph.append(("transform", transformer))
+        new_stream.metadata.stream_graph_2.append((self, new_stream))
+        return new_stream
+
     # @overload
     # def apply_transform(
     #     self,
@@ -465,12 +494,35 @@ class Stream(AsyncIterable[_T]):
     # ) -> Stream[tuple[_T, _T]]:
     #     ...  # works fine
 
+    @overload
+    def apply_transform(
+        self,
+        transformer: StreamTransformer[_T, _U],
+    ) -> Stream[_U]:
+        ...
+
+    @overload
+    def apply_transform(
+        self,
+        transformer: Type[StreamTransformer[_T, _U]],
+    ) -> Stream[_U]:
+        ...
+
+    def apply_transform(
+        self,
+        transformer: Type[StreamTransformer[_T, _U]] | StreamTransformer[_T, _U],
+    ) -> Stream[_U]:
+        new_stream = transformer.__stream_transform__(self)
+        new_stream.metadata.stream_graph.append(("apply_transform", transformer))
+        new_stream.metadata.stream_graph_2.append((self, new_stream))
+        return new_stream
+
     # def apply_transform(
     #     self,
-    #     transformer: Callable[[AsyncIterator[_T]], AsyncIterator[_U]],
+    #     transformer: StreamTransformer[_T, _U],
     # ) -> Stream[_U]:
-    #     new_stream = Stream(transformer(aiter(self)))
-    #     new_stream.metadata.stream_graph.append(("transform", transformer))
+    #     new_stream = transformer.__stream_transform__(self)
+    #     new_stream.metadata.stream_graph.append(("apply_transform", transformer))
     #     new_stream.metadata.stream_graph_2.append((self, new_stream))
     #     return new_stream
 
@@ -478,6 +530,19 @@ class Stream(AsyncIterable[_T]):
     __floordiv__ = flat_map
     __mod__ = filter
     # __matmul__ = apply_transform
+
+    def pairwise(self) -> Stream[tuple[_T, _T]]:
+        return Stream(_pairwise(self))
+
+    @logger.catch
+    def fork(self) -> tuple[Stream[_T], Stream[_T]]:
+        a, b = atee(self, 2)
+        # self._src_async_iterator = a
+        return a, b
+
+
+# todo invert - StreamTransformer returns new stream, __truediv__ etc calls StreamTransformer
+#  and StreamTransformer defines __rmatmul__ etc
 
 
 def _sync_function(item: int) -> int:
@@ -515,32 +580,78 @@ async def _summer(over: Iterable[int]) -> int:
     return sum(over)
 
 
+@runtime_checkable
+class StreamTransformer(Protocol[_T, _U]):
+    @staticmethod
+    def __stream_transform__(stream: Stream[_T]) -> Stream[_U]:
+        ...
+
+
+Enumerate: Callable[[AsyncIterable[_T]], Map[_T, tuple[int, _T]]] = Map[
+    _T, tuple[int, _T]
+].with_args(enumerate)
+
+
+class Pairwise(StreamTransformer[_T, tuple[_T, _T]]):
+    @staticmethod
+    def __stream_transform__(stream: Stream[_T]) -> Stream[tuple[_T, _T]]:
+        async def _pairwise(
+            src: AsyncIterator[_T],
+        ) -> AsyncIterator[tuple[_T, _T]]:
+            prev = await src.__anext__()
+            async for item in src:
+                yield prev, item
+                prev = item
+
+        return Stream(_pairwise(aiter(stream)))
+
+
+def random_enumerate(item: list[_T]) -> tuple[int, list[_T]]:
+    return random.randint(0, 100), item
+
+
+@logger.catch
 async def main() -> None:
 
-    async for i in Map(_sync_iterable(), _sync_function):
+    # async for i in Map(_sync_iterable(), _sync_function):
+    #     print(i)
+    #     if TYPE_CHECKING:
+    #         reveal_type(i)
+    #
+    # async for i in Map(_async_iterable(), _async_function):
+    #     print(i)
+    #     if TYPE_CHECKING:
+    #         reveal_type(i)
+    #
+    # async for i in Map(_sync_iterable(), _async_function):
+    #     print(i)
+    #     if TYPE_CHECKING:
+    #         reveal_type(i)
+    #
+    # async for i in Map(_async_iterable(), _sync_function):
+    #     print(i)
+    #     if TYPE_CHECKING:
+    #         reveal_type(i)
+    #
+    # async for ii in FlatMap(_sync_iterable(), _lo_range):
+    #     print(ii)
+    #     if TYPE_CHECKING:
+    #         reveal_type(ii)
+    #
+    # # async for j in Stream(_async_iterable()) / _sync_function:
+    # #     print(j)
+    # #     if TYPE_CHECKING:
+    # #         reveal_type(j)
+    #
+    # async for j in Stream(_async_iterable()) % (lambda x: x % 2 == 0) // (lambda x: range(x)):
+    #     print(j)
+    #     if TYPE_CHECKING:
+    #         reveal_type(j)
+
+    async for i in Stream(_async_iterable()) / (lambda x: x * 2):
         print(i)
         if TYPE_CHECKING:
             reveal_type(i)
-
-    async for i in Map(_async_iterable(), _async_function):
-        print(i)
-        if TYPE_CHECKING:
-            reveal_type(i)
-
-    async for i in Map(_sync_iterable(), _async_function):
-        print(i)
-        if TYPE_CHECKING:
-            reveal_type(i)
-
-    async for i in Map(_async_iterable(), _sync_function):
-        print(i)
-        if TYPE_CHECKING:
-            reveal_type(i)
-
-    async for ii in FlatMap(_sync_iterable(), _lo_range):
-        print(ii)
-        if TYPE_CHECKING:
-            reveal_type(ii)
 
     # import rich
     #
@@ -549,4 +660,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(), debug=True)

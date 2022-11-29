@@ -17,7 +17,7 @@ from typing import (
     overload,
 )
 
-from astream import (
+from . import (
     Stream,
     StreamFilterable,
     StreamFlatMappable,
@@ -27,7 +27,8 @@ from astream import (
     amap,
     ensure_coro_fn,
 )
-from astream.closeable_queue import CloseableQueue
+
+from .closeable_queue import CloseableQueue
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -39,7 +40,10 @@ _CoroT: TypeAlias = Coroutine[Any, Any, _T]
 
 
 class WorkerPool(
-    StreamMappable[_T, _R], StreamFilterable[_T], StreamFlatMappable[_T, _R], Generic[_T, _R]
+    StreamMappable[_T, _R],
+    StreamFilterable[_T],
+    StreamFlatMappable[_T, _R],
+    Generic[_T, _R],
 ):
     @overload
     def __init__(self, fn: Callable[[_T], _CoroT[_R]], num_workers: int = ...) -> None:
@@ -88,14 +92,6 @@ class WorkerPool(
 
     def __stream_filter__(self: WorkerPool[_T, _T], stream: Stream[_T]) -> Stream[_T]:
         return self._stream_op(stream, afilter)
-
-    @overload
-    def __stream_flatmap__(self, stream: Stream[AsyncIterable[_U]]) -> Stream[_R]:
-        ...
-
-    @overload
-    def __stream_flatmap__(self, stream: Stream[Iterable[_U]]) -> Stream[_R]:
-        ...
 
     def __stream_flatmap__(
         self, stream: Stream[AsyncIterable[_U]] | Stream[Iterable[_U]]

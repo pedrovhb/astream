@@ -169,6 +169,7 @@ class TimeDeque(ConsoleRenderable, Generic[_T]):
             )
         else:
             return ""
+
         # if not valid_rates:
         #     return ""
         # self._max_rate = max(self._max_rate, max(valid_rates))

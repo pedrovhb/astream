@@ -327,22 +327,22 @@ if __name__ == "__main__":
 
         s_verify = (
             await (
-                    amerge(arange_delayed(100), arange_delayed(100, 200))
-                    / apredicate_multi_map(
+                amerge(arange_delayed(100), arange_delayed(100, 200))
+                / apredicate_multi_map(
                     {
                         is_mod_three: to_streeeng,
                         Default: to_streeeeeeeeeeng,
                     },
                 )
-                    / rev_strin
-                    / agroup_map(
+                / rev_strin
+                / agroup_map(
                     first_character,
                     {
                         ".": say_dot,
                         Default: say_dah,
                     },
                 )
-                    / F(str.split)(sep="1")
+                / F(str.split)(sep="1")
             )
             .aflatmap(lambda x: x)
             .amap(print)

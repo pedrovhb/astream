@@ -88,6 +88,8 @@ f = F[int]("it[4].denominator + 2 - n")
 #     Tuple,
 # )
 #
+
+
 # import rich
 # from rich import inspect
 # from rich.table import Table

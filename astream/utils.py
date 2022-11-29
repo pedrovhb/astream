@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import time
 from asyncio import Future
 from queue import Queue
 from typing import *
@@ -53,56 +54,77 @@ def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:
     return decorated
 
 
-def _iter_to_aiter_threaded(iterable: Iterable[_T]) -> AsyncIterator[_T]:
-    """Convert an iterable to an async iterable (running the iterable in a background thread)."""
-
-    stop_sentinel = SentinelType()
-
-    def _iter_to_queue() -> None:
-        for it in iterable:
-            queue.put(it)
-        queue.put(stop_sentinel)
-
-    queue: Queue[_T | SentinelType] = Queue(maxsize=100_000)
-
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _iter_to_queue)
-
-    async def _inner() -> AsyncIterator[_T]:
-        while True:
-            while not queue.empty():
-                it = queue.get_nowait()
-                if it is stop_sentinel:
-                    return
-                assert not isinstance(it, SentinelType)
-                yield it
-                await asyncio.sleep(0)
-            await asyncio.sleep(0)
-
-    return _inner()
-
-
-def iter_to_aiter(iterable: Iterable[_T], to_thread: bool) -> AsyncIterator[_T]:
-    """Convert an iterable to an async iterable.
+async def iter_to_aiter(iterable: Iterable[_T], /, target_dt: float = 0.0005) -> AsyncIterator[_T]:
+    """Convert an iterable to an async iterator, running the iterable in a thread.
 
     Args:
         iterable: The iterable to convert.
-        to_thread: Whether to run the iterable in a background thread.
+        target_dt: The target maximum time to possibly block the event loop for. Defaults to 0.0005.
+            Note that this is not a hard limit, and the actual time spent blocking the event loop
+            may be longer than this. See also sys.getswitchinterval().
 
-    Returns:
-        An async iterable.
+    Yields:
+        Items from the iterable.
+
+    Examples:
+        >>> async def demo_iter_to_thread():
+        ...     async for item in iter_to_aiter(range(5)):
+        ...         print(item)
+        >>> asyncio.run(demo_iter_to_thread())
+        0
+        1
+        2
+        3
+        4
     """
+    iterator = iter(iterable)
+    loop = asyncio.get_running_loop()
+    result = []
 
-    if to_thread:
-        return _iter_to_aiter_threaded(iterable)
+    def run_iterator():
+        # We assign variables to the function scope to avoid the overhead of
+        # looking them up in the closure scope during the hot loop. We also
+        # reuse the same list to avoid the overhead of allocating a new list
+        # every time, and have it in shared memory to avoid the overhead of
+        # copying the list to the main thread.
+        _result_append = result.append
+        _iterator_next = iterator.__next__
+        _time_monotonic = time.monotonic
+        _target_t = _time_monotonic() + target_dt
 
-    @functools.wraps(iterable.__iter__)
-    async def _inner() -> AsyncIterator[T]:
-        for it in iterable:
-            yield it
-            await asyncio.sleep(0)
+        try:
+            while _time_monotonic() < _target_t:
+                _result_append(_iterator_next())
+        except StopIteration:
+            raise StopAsyncIteration
 
-    return _inner()
+    while True:
+        try:
+            # Run the iterator in a thread until we've reached the target time.
+            await loop.run_in_executor(None, run_iterator)
+
+            # Yield the results.
+            for item in result:
+                yield item
+
+            # Clear the results.
+            result.clear()
+        except StopAsyncIteration:
+            # Yield the remaining items in the result buffer.
+            for item in result:
+                yield item
+            return
+
+
+def ensure_async_iterator(
+    maybe_async_iterable: Iterable[_T] | AsyncIterable[_T],
+) -> AsyncIterator[_T]:
+    if isinstance(maybe_async_iterable, AsyncIterable):
+        return maybe_async_iterable.__aiter__()
+    elif isinstance(maybe_async_iterable, Iterable):
+        return iter_to_aiter(maybe_async_iterable)
+    else:
+        raise TypeError("Expected an iterable or async iterable")
 
 
 @overload

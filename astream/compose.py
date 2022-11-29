@@ -23,6 +23,7 @@ def compose_two(
 ) -> Callable[P, CoroT[R]]:
     """Compose two sync or async functions, and return an async function.
 
+
     Args:
         fn1: The first function to compose.
         fn2: The second function to compose.
