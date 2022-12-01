@@ -116,17 +116,6 @@ async def iter_to_aiter(iterable: Iterable[_T], /, target_dt: float = 0.0005) ->
             return
 
 
-def ensure_async_iterator(
-    maybe_async_iterable: Iterable[_T] | AsyncIterable[_T],
-) -> AsyncIterator[_T]:
-    if isinstance(maybe_async_iterable, AsyncIterable):
-        return maybe_async_iterable.__aiter__()
-    elif isinstance(maybe_async_iterable, Iterable):
-        return iter_to_aiter(maybe_async_iterable)
-    else:
-        raise TypeError("Expected an iterable or async iterable")
-
-
 @overload
 def ensure_coro_fn(fn: Callable[_P, _CoroT[_T]], to_thread: bool = ...) -> Callable[_P, _CoroT[_T]]:
     ...
@@ -170,19 +159,16 @@ def ensure_coro_fn(
 
 
 @overload
-def ensure_async_iterator(iterable: Iterable[_T], to_thread: bool = ...) -> AsyncIterator[_T]:
+def ensure_async_iterator(iterable: Iterable[_T]) -> AsyncIterator[_T]:
     ...
 
 
 @overload
-def ensure_async_iterator(iterable: AsyncIterable[_T], to_thread: bool = ...) -> AsyncIterator[_T]:
+def ensure_async_iterator(iterable: AsyncIterable[_T]) -> AsyncIterator[_T]:
     ...
 
 
-def ensure_async_iterator(
-    iterable: Iterable[_T] | AsyncIterable[_T],
-    to_thread: bool = False,
-) -> AsyncIterator[_T]:
+def ensure_async_iterator(iterable: Iterable[_T] | AsyncIterable[_T]) -> AsyncIterator[_T]:
     """Given an iterable or async iterable, return an async iterable.
 
     Args:
@@ -196,7 +182,7 @@ def ensure_async_iterator(
     if isinstance(iterable, AsyncIterable):
         return aiter(iterable)
 
-    return aiter(iter_to_aiter(iterable, to_thread=to_thread))
+    return aiter(iter_to_aiter(iterable))
 
 
 def create_future() -> Future[_T]:

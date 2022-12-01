@@ -31,11 +31,12 @@ from typing import (
     TYPE_CHECKING,
     Collection,
     Final,
+    NoReturn,
 )
 
 from loguru import logger
 
-from .utils import NoValueT, NoValue
+from .utils import NoValueT, NoValue, iter_to_aiter
 from .stream_utils import (
     aconcatenate,
     afilter,
@@ -71,19 +72,10 @@ async def _pairwise(src: AsyncIterable[_T]) -> AsyncIterator[tuple[_T, _T]]:
 
 
 def ensure_async_iterator(src: Iterable[_T] | AsyncIterable[_T]) -> AsyncIterator[_T]:
-    if isinstance(src, AsyncIterable):
-        _async_src = src
-        return aiter(_async_src)
-
-    elif isinstance(src, Iterable):
-        _sync_src: Iterable[_T] = src
-
-        async def _aiter() -> AsyncIterator[_T]:
-            for item in _sync_src:
-                yield item
-
-        return _aiter()
-
+    if hasattr(src, "__aiter__"):
+        return src.__aiter__()
+    elif hasattr(src, "__iter__"):
+        return iter_to_aiter(src.__iter__())
     else:
         raise TypeError(f"Invalid source type: {type(src)}")
 
@@ -101,12 +93,15 @@ def ensure_coroutine_function(fn: Callable[P, _U]) -> Callable[P, _CoroT[_U]]:
     ...
 
 
-def ensure_coroutine_function(
-    fn: Callable[P, _CoroT[_U]] | Callable[P, _U]
-) -> Callable[P, _CoroT[_U]]:
+@overload
+def ensure_coroutine_function(fn: object) -> NoReturn | Callable[P, _CoroT[_U]]:
+    ...
+
+
+def ensure_coroutine_function(fn: object) -> Callable[P, _CoroT[_U]] | NoReturn:
     if inspect.iscoroutinefunction(fn):
         return fn
-    else:
+    elif callable(fn):
         _fn_sync: Callable[P, _U] = cast(Callable[P, _U], fn)
 
         @functools.wraps(_fn_sync)
@@ -114,6 +109,8 @@ def ensure_coroutine_function(
             return _fn_sync(*args, **kwargs)
 
         return _fn_async
+    else:
+        raise TypeError(f"Expected callable but got {type(fn)}")
 
 
 class TransformableAsyncIterable(AsyncIterable[_T], Generic[_T], ABC):
@@ -587,9 +584,9 @@ class StreamTransformer(Protocol[_T, _U]):
         ...
 
 
-Enumerate: Callable[[AsyncIterable[_T]], Map[_T, tuple[int, _T]]] = Map[
-    _T, tuple[int, _T]
-].with_args(enumerate)
+# Enumerate: Callable[[AsyncIterable[_T]], Map[_T, tuple[int, _T]]] = Map[
+#     _T, tuple[int, _T]
+# ].with_args(enumerate)
 
 
 class Pairwise(StreamTransformer[_T, tuple[_T, _T]]):

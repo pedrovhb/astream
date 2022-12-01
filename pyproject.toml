@@ -6,6 +6,7 @@ authors = ["Pedro Batista <pedrovhb@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
+phantom-types = "^1.1.0"
 
 [tool.poetry.dev-dependencies]
 black = "^22.10.0"
@@ -25,8 +26,8 @@ ptpython = "^3.0.20"
 ipython = "^8.6.0"
 jupyterlab = "^3.5.0"
 watchfiles = "^0.18.1"
-mypy = {url = "https://github.com/mypyc/mypy_mypyc-wheels/releases/download/v1.0.0%2Bdev.1d6a5b1d2abf617b149e8bf8ff435f64dc507fd3/mypy-1.0.0+dev.1d6a5b1d2abf617b149e8bf8ff435f64dc507fd3-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"}
 pyre-check = "^0.9.17"
+mypy = "^0.991"
 
 
 [tool.pdm]
@@ -76,23 +77,23 @@ warn_unreachable = true
 strict = true
 
 
-show_error_codes = true
+#show_error_codes = true
 #show_traceback = true
-show_column_numbers = true
-show_error_end = true
+#show_column_numbers = true
+#show_error_end = true
 #show_error_context = true
-error_summary = true
+#error_summary = true
 #verbosity = 2
 #color_output = true
 #pretty = true
 
-dump_build_stats = true
-dump_deps = true
-dump_graph = true
-dump_inference_stats = true
-dump_type_stats = true
+#dump_build_stats = true
+#dump_deps = true
+#dump_graph = true
+#dump_inference_stats = true
+#dump_type_stats = true
 #enable_incomplete_features = true
-export_types = true
+#export_types = true
 
 [tool.black]
 line-length = 100
@@ -116,7 +117,9 @@ authors = [
     {name = "Pedro Batista",email = "pedrovhb@gmail.com"},
 ]
 requires-python = ">=3.10,<4.0"
-dependencies = []
+dependencies = [
+    "phantom-types>=1.1.0",
+]
 name = "astream"
 version = "0.5.1"
 description = ""
