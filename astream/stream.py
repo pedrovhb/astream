@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from abc import ABC
 from functools import wraps, singledispatch
 from types import NotImplementedType
@@ -475,6 +476,9 @@ class FnTransformer(Transformer[_I, _O]):
 def transformer(
     _fn: Callable[Concatenate[AsyncIterator[_I], _P], AsyncIterator[_O]]
 ) -> Callable[_P, FnTransformer[_I, _O]]:
+    # todo - make fns with no arguments other than the async iterable be usable without calling,
+    #  e.g. arange(10) / pairwise
+    #  probably by wrapping the function with a metaclass
     @wraps(_fn)
     def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> FnTransformer[_I, _O]:
         def _inner(_src: AsyncIterator[_I]) -> AsyncIterator[_O]:
