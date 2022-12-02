@@ -3,10 +3,8 @@ from __future__ import annotations
 from typing import AsyncIterable, Iterable, Callable, TypeAlias, Any, Coroutine, Iterator, TypeVar
 
 import pytest
-from loguru import logger
 
-# from astream.formal import Map, FlatMap, Filter, FilterFalse
-from astream.pyrest import Map, FlatMap, Filter, FilterFalse
+from astream import Stream
 
 _T = TypeVar("_T")
 _CoroT: TypeAlias = Coroutine[Any, Any, _T]
@@ -48,7 +46,7 @@ async def test_map(
     fn: Callable[[int], int] | Callable[[int], _CoroT[int]],
     expected: Iterator[int],
 ) -> None:
-    async for i in src / Map(fn):
+    async for i in Stream(src) / fn:
         assert i == next(expected)
 
     with pytest.raises(StopIteration):
@@ -98,7 +96,7 @@ async def test_flat_map(
     fn: Callable[[int], Iterable[int]] | Callable[[int], AsyncIterable[int]],
     expected: Iterator[int],
 ) -> None:
-    async for i in src // FlatMap(fn):
+    async for i in Stream(src) // fn:
         assert i == next(expected)
 
     with pytest.raises(StopIteration):
@@ -108,7 +106,7 @@ async def test_flat_map(
 @pytest.mark.asyncio
 async def test_flat_map_invalid() -> None:
     with pytest.raises(TypeError):
-        async for _ in FlatMap(_sync_iterable(), _sync_function):  # type: ignore
+        async for _ in Stream(_sync_iterable()) // _sync_function:  # type: ignore
             pass
 
 
@@ -143,30 +141,31 @@ async def test_filter(
     fn: Callable[[int], bool] | Callable[[int], _CoroT[bool]],
     expected: Iterator[int],
 ) -> None:
-    async for i in src % Filter(fn):
+    async for i in Stream(src) % fn:
         assert i == next(expected)
 
     with pytest.raises(StopIteration):
         next(expected)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "src, fn, expected",
-    [
-        (_sync_iterable(), _sync_filter, expected_filtered_false_range()),
-        (_async_iterable(), _sync_filter, expected_filtered_false_range()),
-        (_sync_iterable(), _async_filter, expected_filtered_false_range()),
-        (_async_iterable(), _async_filter, expected_filtered_false_range()),
-    ],
-)
-async def test_filter_not(
-    src: Iterable[int] | AsyncIterable[int],
-    fn: Callable[[int], bool] | Callable[[int], _CoroT[bool]],
-    expected: Iterator[int],
-) -> None:
-    async for i in src % FilterFalse(fn):
-        assert i == next(expected)
-
-    with pytest.raises(StopIteration):
-        next(expected)
+#
+# @pytest.mark.asyncio
+# @pytest.mark.parametrize(
+#     "src, fn, expected",
+#     [
+#         (_sync_iterable(), _sync_filter, expected_filtered_false_range()),
+#         (_async_iterable(), _sync_filter, expected_filtered_false_range()),
+#         (_sync_iterable(), _async_filter, expected_filtered_false_range()),
+#         (_async_iterable(), _async_filter, expected_filtered_false_range()),
+#     ],
+# )
+# async def test_filter_not(
+#     src: Iterable[int] | AsyncIterable[int],
+#     fn: Callable[[int], bool] | Callable[[int], _CoroT[bool]],
+#     expected: Iterator[int],
+# ) -> None:
+#     async for i in src % FilterFalse(fn):
+#         assert i == next(expected)
+#
+#     with pytest.raises(StopIteration):
+#         next(expected)

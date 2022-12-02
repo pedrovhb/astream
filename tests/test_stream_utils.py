@@ -8,14 +8,12 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from astream import Stream
+from astream import Stream, transformer
 from astream.stream_utils import (
     aconcatenate,
     aenumerate,
-    aflatmap,
     agetattr,
     agetitem,
-    amap,
     amerge,
     arange,
     arange_delayed,
@@ -44,7 +42,7 @@ async def test_amerge() -> None:
 @given(its=st.iterables(st.lists(st.integers(), min_size=1, max_size=1000)))
 async def test_apluck(its: list[list[int]]) -> None:
 
-    async for item in agetitem(Stream(its), 0):
+    async for item in Stream(its) / agetitem(0):
         assert isinstance(item, int)
 
 
@@ -52,7 +50,7 @@ async def test_apluck(its: list[list[int]]) -> None:
 async def test_ascan() -> None:
 
     expected = [0, 1, 3, 6, 10, 15, 21, 28, 36, 45]
-    async for item in ascan(lambda x, y: x + y, arange(10)):
+    async for item in Stream(range(10)) / ascan(lambda x, y: x + y):
         assert isinstance(item, int)
         assert item == expected.pop(0)
     assert not expected
@@ -138,7 +136,7 @@ async def test_aconcatenate() -> None:
 @pytest.mark.asyncio
 async def test_aenumerate() -> None:
     expected = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)]
-    async for i, j in aenumerate(arange(5)):
+    async for i, j in arange(5) / aenumerate():
         assert i == expected[i][0]
         assert j == expected[i][1]
 
@@ -150,7 +148,7 @@ async def test_agetattr() -> None:
             self.n = n
 
     expected = [0, 1, 2, 3, 4]
-    async for i in agetattr(Stream([Foo(n) for n in expected]), "n"):
+    async for i in Stream([Foo(n) for n in expected]) / agetattr("n"):
         assert i == expected.pop(0)
 
 
@@ -173,7 +171,7 @@ async def test_atee() -> None:
 @pytest.mark.asyncio
 async def test_amap() -> None:
     g = iter(range(5))
-    async for i in amap(lambda x: x + 1, arange(5)):
+    async for i in arange(5) / (lambda x: x + 1):
         assert i == next(g) + 1
 
     with pytest.raises(StopIteration):
@@ -182,6 +180,7 @@ async def test_amap() -> None:
 
 @pytest.mark.asyncio
 async def test_aflatmap() -> None:
+    @transformer
     async def range_stringer(ar: AsyncIterable[int]) -> AsyncIterable[str]:
         async for i in ar:
             yield str(i) + "!"
@@ -190,12 +189,11 @@ async def test_aflatmap() -> None:
         for i in range(5):
             yield from range(i)
 
-    async def iter_of_iters() -> AsyncIterable[AsyncIterable[int]]:
-        for i in range(5):
-            yield arange(i)
+    def iter_of_iters(n: int) -> Iterable[int]:
+        return range(n)
 
     gen = exp()
-    async for j in aflatmap(range_stringer, iter_of_iters()):
+    async for j in arange(5) // iter_of_iters / range_stringer():
         assert j == str(next(gen)) + "!"
 
     with pytest.raises(StopIteration):
@@ -206,7 +204,7 @@ async def test_aflatmap() -> None:
 async def test_flatten() -> None:
 
     expected = chain.from_iterable(range(i) for i in range(5))
-    async for j in +Stream(amap(arange, arange(5))):
+    async for j in +(arange(5) / arange):
         assert j == next(expected)
 
     with pytest.raises(StopIteration):

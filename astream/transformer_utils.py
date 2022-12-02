@@ -13,7 +13,7 @@ from typing import (
     cast,
 )
 
-from .utils import NoValue, SentinelType, ensure_async_iterator, ensure_coro_fn
+from .utils import NoValue, SentinelType, ensure_async_iterator, ensure_coroutine_function
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -47,7 +47,7 @@ async def areduce(
         >>> asyncio.run(demo_areduce())
         15
     """
-    _fn_async = ensure_coro_fn(fn)
+    _fn_async = ensure_coroutine_function(fn)
     _it_async = ensure_async_iterator(iterable)
 
     if initial is NoValue:

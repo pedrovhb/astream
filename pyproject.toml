@@ -7,6 +7,7 @@ authors = ["Pedro Batista <pedrovhb@gmail.com>"]
 [tool.poetry.dependencies]
 python = "^3.10"
 phantom-types = "^1.1.0"
+typing-extensions = "^4.4.0"
 
 [tool.poetry.dev-dependencies]
 black = "^22.10.0"
@@ -27,7 +28,7 @@ ipython = "^8.6.0"
 jupyterlab = "^3.5.0"
 watchfiles = "^0.18.1"
 pyre-check = "^0.9.17"
-mypy = "^0.991"
+mypy = {url = "https://github.com/mypyc/mypy_mypyc-wheels/releases/download/v1.0.0%2Bdev.740b36428d8817d276e46f817ac11b18cea4d766/mypy-1.0.0+dev.740b36428d8817d276e46f817ac11b18cea4d766-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"}
 
 
 [tool.pdm]

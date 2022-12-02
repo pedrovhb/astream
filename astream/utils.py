@@ -79,9 +79,9 @@ async def iter_to_aiter(iterable: Iterable[_T], /, target_dt: float = 0.0005) ->
     """
     iterator = iter(iterable)
     loop = asyncio.get_running_loop()
-    result = []
+    result: list[_T] = []
 
-    def run_iterator():
+    def run_iterator() -> None:
         # We assign variables to the function scope to avoid the overhead of
         # looking them up in the closure scope during the hot loop. We also
         # reuse the same list to avoid the overhead of allocating a new list
@@ -117,16 +117,20 @@ async def iter_to_aiter(iterable: Iterable[_T], /, target_dt: float = 0.0005) ->
 
 
 @overload
-def ensure_coro_fn(fn: Callable[_P, _CoroT[_T]], to_thread: bool = ...) -> Callable[_P, _CoroT[_T]]:
+def ensure_coroutine_function(
+    fn: Callable[_P, _CoroT[_T]], to_thread: bool = ...
+) -> Callable[_P, _CoroT[_T]]:
     ...
 
 
 @overload
-def ensure_coro_fn(fn: Callable[_P, _T], to_thread: bool = ...) -> Callable[_P, _CoroT[_T]]:
+def ensure_coroutine_function(
+    fn: Callable[_P, _T], to_thread: bool = ...
+) -> Callable[_P, _CoroT[_T]]:
     ...
 
 
-def ensure_coro_fn(
+def ensure_coroutine_function(
     fn: Callable[_P, _T] | Callable[_P, _CoroT[_T]], to_thread: bool = False
 ) -> Callable[_P, _CoroT[_T]]:
     """Given a sync or async function, return an async function.
@@ -192,7 +196,7 @@ def create_future() -> Future[_T]:
 __all__ = (
     "run_sync",
     "iter_to_aiter",
-    "ensure_coro_fn",
+    "ensure_coroutine_function",
     "ensure_async_iterator",
     "create_future",
     "SentinelType",

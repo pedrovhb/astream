@@ -71,48 +71,6 @@ async def _pairwise(src: AsyncIterable[_T]) -> AsyncIterator[tuple[_T, _T]]:
         prev = item
 
 
-def ensure_async_iterator(src: Iterable[_T] | AsyncIterable[_T]) -> AsyncIterator[_T]:
-    if hasattr(src, "__aiter__"):
-        return src.__aiter__()
-    elif hasattr(src, "__iter__"):
-        return iter_to_aiter(src.__iter__())
-    else:
-        raise TypeError(f"Invalid source type: {type(src)}")
-
-
-P = ParamSpec("P")
-
-
-@overload
-def ensure_coroutine_function(fn: Callable[P, _CoroT[_U]]) -> Callable[P, _CoroT[_U]]:
-    ...
-
-
-@overload
-def ensure_coroutine_function(fn: Callable[P, _U]) -> Callable[P, _CoroT[_U]]:
-    ...
-
-
-@overload
-def ensure_coroutine_function(fn: object) -> NoReturn | Callable[P, _CoroT[_U]]:
-    ...
-
-
-def ensure_coroutine_function(fn: object) -> Callable[P, _CoroT[_U]] | NoReturn:
-    if inspect.iscoroutinefunction(fn):
-        return fn
-    elif callable(fn):
-        _fn_sync: Callable[P, _U] = cast(Callable[P, _U], fn)
-
-        @functools.wraps(_fn_sync)
-        async def _fn_async(*args: P.args, **kwargs: P.kwargs) -> _U:
-            return _fn_sync(*args, **kwargs)
-
-        return _fn_async
-    else:
-        raise TypeError(f"Expected callable but got {type(fn)}")
-
-
 class TransformableAsyncIterable(AsyncIterable[_T], Generic[_T], ABC):
     def __transform__(self, transformer: Transformer[_T, _U]) -> AsyncIterable[_U]:
         ...

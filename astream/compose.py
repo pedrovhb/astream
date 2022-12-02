@@ -4,7 +4,7 @@ import functools
 from collections import deque
 from typing import Any, Callable, ParamSpec, TypeVar, cast, overload
 
-from astream import ensure_coro_fn
+from astream import ensure_coroutine_function
 from astream.protocols.type_aliases import CoroT, R, T
 
 A = TypeVar("A")
@@ -31,8 +31,8 @@ def compose_two(
     Returns:
         The composed function.
     """
-    fn1_async = cast(Callable[P, CoroT[T]], ensure_coro_fn(fn1))
-    fn2_async = cast(Callable[[T], CoroT[R]], ensure_coro_fn(fn2))
+    fn1_async = cast(Callable[P, CoroT[T]], ensure_coroutine_function(fn1))
+    fn2_async = cast(Callable[[T], CoroT[R]], ensure_coroutine_function(fn2))
 
     async def _composed(*args: P.args, **kwargs: P.kwargs) -> R:
         return await fn2_async(await fn1_async(*args, **kwargs))
@@ -126,7 +126,7 @@ def compose(
     Returns:
         The composed function.
     """
-    fns = deque(ensure_coro_fn(fn) for fn in funcs)
+    fns = deque(ensure_coroutine_function(fn) for fn in funcs)
     if len(fns) == 1:
         return fns[0]
     return functools.reduce(compose_two, funcs)  # type: ignore

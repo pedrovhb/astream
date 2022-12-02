@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import math
+from collections import deque
+from functools import partial
 import random
 from abc import abstractmethod
-from asyncio import Future
+from asyncio import Future, Queue
 from datetime import timedelta
 from typing import (
     Any,
@@ -20,12 +21,19 @@ from typing import (
     cast,
     overload,
     runtime_checkable,
-    Generic,
+    Literal,
 )
 
-from rich import inspect
+import math
 
-from astream import NoValue, ensure_async_iterator, ensure_coro_fn, NoValueT
+from .stream import transformer, FnTransformer, Transformer, Stream, stream
+from .utils import (
+    NoValue,
+    ensure_async_iterator,
+    ensure_coroutine_function,
+    NoValueT,
+    create_future,
+)
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -49,6 +57,7 @@ class SupportsGetItem(Protocol[_KT, _VT]):
         ...
 
 
+@transformer
 async def aenumerate(iterable: AsyncIterable[_T], start: int = 0) -> AsyncIterator[tuple[int, _T]]:
     """An asynchronous version of `enumerate`."""
     async for item in iterable:
@@ -56,6 +65,7 @@ async def aenumerate(iterable: AsyncIterable[_T], start: int = 0) -> AsyncIterat
         start += 1
 
 
+@transformer
 async def agetitem(
     iterable: AsyncIterable[SupportsGetItem[_KT, _VT]],
     key: _KT,
@@ -65,6 +75,7 @@ async def agetitem(
         yield item[key]
 
 
+@transformer
 async def agetattr(
     iterable: AsyncIterable[object],
     name: str,
@@ -74,133 +85,46 @@ async def agetattr(
         yield getattr(item, name)
 
 
-def afilter(
-    fn: Callable[[_T], Coroutine[Any, Any, bool]] | Callable[[_T], bool],
-    iterable: AsyncIterable[_T] | Iterable[_T],
-) -> AsyncIterator[_T]:
-    """An asynchronous version of `filter`."""
-
-    async def _filter() -> AsyncIterator[_T]:
-        _fn = ensure_coro_fn(fn)
-        _iterable = ensure_async_iterator(iterable)
-        async for item in _iterable:
-            if await _fn(item):
-                yield item
-
-    return _filter()
-
-
 def atee(
     iterable: AsyncIterable[_T] | Iterable[_T],
     n: int = 2,
 ) -> tuple[AsyncIterator[_T], ...]:
     """An asynchronous version of `tee`."""
 
-    create_future = asyncio.get_running_loop().create_future
+    # futs: dict[Future[None], Queue[_T]] = {create_future(): Queue() for _ in range(n)}
+    queues: tuple[Queue[_T], ...] = tuple(Queue() for _ in range(n))
+    done_future: Future[None] = create_future()
 
     async def _tee_feeder() -> None:
-        async for item in ensure_async_iterator(iterable):
-            ks = tuple(futs.keys())
-            for fut in ks:
-                tee = futs.pop(fut)
-                next_fut = create_future()
-                futs[next_fut] = tee
-                fut.set_result((item, next_fut))
-            for fut in futs:
+        _iterable = ensure_async_iterator(iterable)
+        async for item in _iterable:
+            for queue in queues:
+                queue.put_nowait(item)
+        done_future.set_result(None)
 
-                inspect(fut, all=True)
-                fut.set_exception(StopAsyncIteration)
-
-    async def _tee(next_fut: _ItemAndFut[_T]) -> AsyncIterator[_T]:
+    async def _tee(queue: Queue[_T]) -> AsyncIterator[_T]:
         while True:
-            try:
-                item, next_fut = await next_fut
-            except StopAsyncIteration:
+            done, pending = await asyncio.wait(
+                (done_future, get_task := asyncio.create_task(queue.get())),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if get_task in done:
+                item = await get_task
+                queue.task_done()
+                yield item
+
+            if done_future in done:
+                while not queue.empty():
+                    item = queue.get_nowait()
+                    queue.task_done()
+                    yield item
                 break
-            yield item
 
-    futs = {(f := create_future()): _tee(f) for _ in range(n)}
     asyncio.create_task(_tee_feeder())
-    return tuple(futs.values())
+    return tuple(_tee(queue) for queue in queues)
 
 
-@overload
-def amap(
-    fn: Callable[[_T], _CoroT[_U]], iterable: AsyncIterable[_T] | Iterable[_T]
-) -> AsyncIterator[_U]:
-    ...
-
-
-@overload
-def amap(fn: Callable[[_T], _U], iterable: AsyncIterable[_T] | Iterable[_T]) -> AsyncIterator[_U]:
-    ...
-
-
-def amap(
-    fn: Callable[[_T], Coroutine[Any, Any, _U]] | Callable[[_T], _U],
-    iterable: AsyncIterable[_T] | Iterable[_T],
-) -> AsyncIterator[_U]:
-    """An asynchronous version of `map`."""
-
-    async def _map() -> AsyncIterator[_U]:
-        _fn: Callable[[_T], _CoroT[_U]] = ensure_coro_fn(fn)
-        _iterable = ensure_async_iterator(iterable)
-        async for item in _iterable:
-            yield await _fn(item)
-
-    return _map()
-
-
-@overload
-def aflatmap(
-    fn: Callable[[AsyncIterable[_T]], AsyncIterable[_U]],
-    iterable: AsyncIterable[Iterable[_T]],
-) -> AsyncIterator[_U]:
-    ...
-
-
-@overload
-def aflatmap(
-    fn: Callable[[AsyncIterable[_T]], AsyncIterable[_U]],
-    iterable: AsyncIterable[AsyncIterable[_T]],
-) -> AsyncIterator[_U]:
-    ...
-
-
-@overload
-def aflatmap(
-    fn: Callable[[AsyncIterable[_T]], AsyncIterable[_U]],
-    iterable: Iterable[Iterable[_T]],
-) -> AsyncIterator[_U]:
-    ...
-
-
-@overload
-def aflatmap(
-    fn: Callable[[AsyncIterable[_T]], AsyncIterable[_U]],
-    iterable: Iterable[AsyncIterable[_T]],
-) -> AsyncIterator[_U]:
-    ...
-
-
-def aflatmap(
-    fn: Callable[[AsyncIterable[_T]], AsyncIterable[_U]],
-    iterable: AsyncIterable[Iterable[_T]]
-    | AsyncIterable[AsyncIterable[_T]]
-    | Iterable[Iterable[_T]]
-    | Iterable[AsyncIterable[_T]],
-) -> AsyncIterator[_U]:
-    async def _flatmap() -> AsyncIterator[_U]:
-        _fn = ensure_coro_fn(fn)
-        _iterable = ensure_async_iterator(iterable)
-        async for item in _iterable:
-            fn_iter = await _fn(item)
-            async for subitem in ensure_async_iterator(fn_iter):
-                yield subitem
-
-    return _flatmap()
-
-
+@stream
 async def arange_delayed(
     start: int,
     stop: int | None = None,
@@ -217,6 +141,7 @@ async def arange_delayed(
         await asyncio.sleep(_delay)
 
 
+@stream
 async def arange_delayed_random(
     start: int,
     stop: int | None = None,
@@ -245,6 +170,7 @@ async def arange_delayed_random(
         rate = rate + random.uniform(-rate_variance, rate_variance)
 
 
+@stream
 async def arange_delayed_sine(
     start: int,
     stop: int | None = None,
@@ -270,7 +196,7 @@ async def arange_delayed_sine(
         await asyncio.sleep(delay)
 
 
-async def arange(start: int, stop: int | None = None, step: int = 1) -> AsyncIterator[int]:
+def arange(start: int, stop: int | None = None, step: int = 1) -> Stream[int]:
     """An asynchronous version of `range`.
 
     Args:
@@ -292,45 +218,10 @@ async def arange(start: int, stop: int | None = None, step: int = 1) -> AsyncIte
         3
         4
     """
-    async for i in arange_delayed(start, stop, step, delay=0):
-        yield i
+    return arange_delayed(start, stop, step, delay=0)
 
 
-# class MergedAsyncIterator(Generic[_T], AsyncIterator[_T]):
-#     """A protocol for a merged stream of items."""
-#
-#     merged_iterables: tuple[Iterable[_T] | AsyncIterable[_T], ...]
-#
-#     def __init__(self, *streams: Iterable[_T] | AsyncIterable[_T]) -> None:
-#         self.merged_iterables = streams
-#
-#         self._futs: dict[asyncio.Future[_T], AsyncIterator[_T]] = {}
-#         for it in self.merged_iterables:
-#             async_it = ensure_async_iterator(it)
-#             fut = asyncio.ensure_future(anext(async_it))
-#             self._futs[fut] = async_it
-#
-#     def __aiter__(self) -> MergedAsyncIterator[_T]:
-#         return self
-#
-#     async def __anext__(self) -> _T:
-#         if not self._futs:
-#             raise StopAsyncIteration
-#         done, _ = await asyncio.wait(self._futs, return_when=asyncio.FIRST_COMPLETED)
-#         for done_fut in done:
-#             try:
-#                 item = done_fut.result()
-#                 fut = asyncio.ensure_future(anext(self._futs[done_fut]))
-#                 self._futs[fut] = self._futs[done_fut]
-#                 return item
-#             except StopAsyncIteration:
-#                 return await anext(self)
-#             finally:
-#                 if done_fut in self._futs:
-#                     del self._futs[done_fut]
-#         raise StopAsyncIteration
-
-
+@stream
 def amerge(*async_iters: Iterable[_T] | AsyncIterable[_T]) -> AsyncIterator[_T]:
     """Merge multiple iterables or async iterables into one, yielding items as they are received.
 
@@ -387,9 +278,10 @@ def amerge(*async_iters: Iterable[_T] | AsyncIterable[_T]) -> AsyncIterator[_T]:
     return _inner()
 
 
+@transformer
 async def ascan(
-    fn: Callable[[_T, _U], Coroutine[Any, Any, _T]] | Callable[[_T, _U], _T],
     iterable: AsyncIterable[_U],
+    fn: Callable[[_T, _U], Coroutine[Any, Any, _T]] | Callable[[_T, _U], _T],
     initial: _T | NoValueT = NoValue,
 ) -> AsyncIterator[_T]:
     """An asynchronous version of `scan`.
@@ -413,17 +305,17 @@ async def ascan(
         6
         10
     """
-    _fn_async = ensure_coro_fn(fn)
+    _fn_async = cast(Callable[[_T, _U], Coroutine[Any, Any, _T]], ensure_coroutine_function(fn))
     _it_async = ensure_async_iterator(iterable)
 
     if isinstance(initial, NoValueT):
-        initial = await anext(_it_async)  # type: ignore
+        initial = await anext(_it_async)
     crt = cast(_T, initial)
 
     yield crt
 
     async for item in _it_async:
-        crt = await _fn_async(crt, item)  # type: ignore
+        crt = await _fn_async(crt, item)
         yield crt
 
 
@@ -526,6 +418,7 @@ async def azip_longest(
         yield tuple(item if item is not NoValue else fillvalue for item in items)
 
 
+@transformer
 async def bytes_stream_split_separator(
     stream: AsyncIterable[bytes],
     separator: bytes = b"\n",
@@ -542,12 +435,10 @@ async def bytes_stream_split_separator(
         The split bytes.
 
     Examples:
-        >>> from astream import stream
+        >>> from astream import Stream
         >>> async def demo_bytes_stream_split_separator():
-        ...     async for it in bytes_stream_split_separator(
-        ...         stream([b"hello", b"world", b"!"]),
-        ...         b"o",
-        ...     ):
+        ...     s = Stream([b"hello", b"world", b"!"])
+        ...     async for it in s / bytes_stream_split_separator(b"o"):
         ...         print(it)
         >>> asyncio.run(demo_bytes_stream_split_separator())
         b'hell'
@@ -576,130 +467,12 @@ async def bytes_stream_split_separator(
 _AsyncIterableT = TypeVar("_AsyncIterableT", bound=AsyncIterable[Any])
 
 
-class AsyncIteratorWithExceptionHandler(Generic[_T], AsyncIterable[_T]):
-    """An async iterator that handles exceptions.
-
-    Args:
-        iterable: The async iterable to wrap.
-        exception_handler: The exception handler to use.
-
-    The handler is called with the exception and the async iterator. If it returns a value, that
-    value is yielded. If it returns `NoValue`, no value is yielded, but the iteration continues.
-    If it raises an exception, that exception is raised.
-    """
-
-    def __init__(
-        self,
-        iterable: AsyncIterable[_T] | Iterable[_T],
-        exception_handler: Callable[
-            [BaseException, Iterable[_T] | AsyncIterable[_T]], _T | NoValueT
-        ]
-        | Callable[[BaseException, Iterable[_T] | AsyncIterable[_T]], _CoroT[_T | NoValueT]],
-    ) -> None:
-        self._iterator = aiter(ensure_async_iterator(iterable))
-        self._iterable = iterable
-
-        _async_handler = ensure_coro_fn(exception_handler)
-        self._exception_handler = _async_handler
-
-    def __aiter__(self) -> AsyncIteratorWithExceptionHandler[_T]:
-        return self
-
-    async def _anext(self) -> _T:
-        try:
-            return await anext(self._iterator)
-        except StopAsyncIteration:
-            print("StopAsyncIteration raised")
-            raise StopAsyncIteration
-        except BaseException as exc:
-            if isinstance(exc, StopAsyncIteration):
-                print("StopAsyncIteration in BaseException")
-                raise StopAsyncIteration
-            else:
-                result = await self._exception_handler(exc, self._iterable)
-                if isinstance(result, NoValueT):
-                    return await self._anext()
-                else:
-                    return cast(_T, result)
-
-    async def __anext__(self) -> _T:
-        return await self._anext()
-
-
-@overload
-def with_exc_handler(
-    iterable: Iterable[_T] | AsyncIterable[_T],
-    handler: Callable[[BaseException, Iterable[_T] | AsyncIterable[_T]], _CoroT[_T | NoValueT]],
-) -> AsyncIterator[_T]:
-    ...
-
-
-@overload
-def with_exc_handler(
-    iterable: Iterable[_T] | AsyncIterable[_T],
-    handler: Callable[[BaseException, Iterable[_T] | AsyncIterable[_T]], _T | NoValueT],
-) -> AsyncIterator[_T]:
-    ...
-
-
-def with_exc_handler(
-    iterable: Iterable[_T] | AsyncIterable[_T],
-    handler: Callable[[BaseException, Iterable[_T] | AsyncIterable[_T]], _CoroT[_T | NoValueT]]
-    | Callable[[BaseException, Iterable[_T] | AsyncIterable[_T]], _T | NoValueT],
-) -> AsyncIterator[_T]:
-    """Wraps an async iterator with an exception handler.
-
-    The handler is called with the exception and the async iterator. If it returns a value, that
-    value is yielded. If it returns `NoValue`, no value is yielded, but the iteration continues.
-    If it raises an exception, that exception is raised.
-
-    Args:
-        iterable: The async iterator.
-        handler: The exception handler.
-
-    Yields:
-        The yielded values.
-
-    Examples:
-        >>> async def demo_with_exc_handler():
-        ...     async for it in with_exc_handler(arange(5), print):
-        ...         print(it)
-        >>> asyncio.run(demo_with_exc_handler())
-        0
-        1
-        2
-        3
-        4
-    """
-    # return AsyncIteratorWithExceptionHandler(iterable, handler)
-    _async_handler = ensure_coro_fn(handler)
-
-    async def _aiter() -> AsyncIterator[_T]:
-        ait = aiter(iterable)
-        while True:
-            try:
-                yield await anext(ait)
-            except (StopAsyncIteration, StopIteration, GeneratorExit):
-                raise
-            except BaseException as exc:
-                result = await _async_handler(exc, iterable)
-                if isinstance(result, NoValueT):
-                    continue
-                else:
-                    yield cast(_T, result)
-
-    return _aiter()
-
-
 __all__ = (
     "aconcatenate",
     "aenumerate",
-    "afilter",
-    "aflatmap",
     "aflatten",
     "agetattr",
     "agetitem",
-    "amap",
     "amerge",
     "arange",
     "arange_delayed",
@@ -711,7 +484,6 @@ __all__ = (
     "azip",
     "azip_longest",
     "bytes_stream_split_separator",
-    "with_exc_handler",
 )
 
 
@@ -719,25 +491,208 @@ def int_to_str(x: int) -> float:
     return str(x)
 
 
-if __name__ == "__main__":
+## new style
 
-    async def demo() -> None:
-        async for i in aenumerate(arange(10, 20)):
-            print(i)
-            reveal_type(i)
-        async for i in aenumerate(arange(10), 5):
-            print(i)
 
-        (a, b), c = atee(arange(10, 15), 2), arange(15, 25)
-        async for j in a:
-            print("a", j)
-        async for j in b:
-            print("b", j)
-        async for j in c:
-            print("c", j)
+async def _nwise(async_iterable: AsyncIterable[_T], n: int) -> AsyncIterator[tuple[_T, ...]]:
+    # Separate implementation from nwise() because the @transformer decorator
+    # doesn't work well with @overload
+    async_iterator = aiter(async_iterable)
+    d = deque[_T](maxlen=n)
 
-        (a, b), c = atee(arange(10, 15), 2), arange(15, 25)
-        async for tup in azip_longest(a, b, c, fillvalue=-1):
-            print(tup)
+    reached_n = False
+    async for item in async_iterator:
+        d.append(item)
+        if reached_n or len(d) == n:
+            reached_n = True
+            yield tuple(d)
 
-    asyncio.run(demo())
+
+@overload
+def nwise(n: Literal[2]) -> Transformer[_T, tuple[_T, _T]]:
+    ...
+
+
+@overload
+def nwise(n: Literal[3]) -> Transformer[_T, tuple[_T, _T, _T]]:
+    ...
+
+
+def nwise(n: int) -> Transformer[_T, tuple[_T, ...]]:
+    """Transform an async iterable into an async iterable of n-tuples.
+
+    Args:
+        n: The size of the tuples to create.
+
+    Returns:
+        A transformer that transforms an async iterable into an async iterable of n-tuples.
+
+    Examples:
+        >>> async def demo_nwise() -> None:
+        ...     async for item in Stream(range(4)).transform(nwise(2)):
+        ...         print(item)
+        >>> asyncio.run(demo_nwise())
+        (0, 1)
+        (1, 2)
+        (2, 3)
+    """
+    return FnTransformer(partial(_nwise, n=n))
+
+
+# @transformer
+# async def flatten(
+#     async_iterator: AsyncIterator[Iterable[_T] | AsyncIterable[_T]],
+# ) -> AsyncIterator[_T]:
+#     """Flatten an async iterable of async iterables.
+#
+#     Args:
+#         async_iterator: The async iterable to flatten.
+#
+#     Returns:
+#         An async iterable of the flattened items.
+#
+#     Examples:
+#         >>> async def demo_flatten() -> None:
+#         ...     async for item in Stream([range(2), range(2, 4)]).transform(flatten()):
+#         ...         print(item)
+#         >>> asyncio.run(demo_flatten())
+#         0
+#         1
+#         2
+#         3
+#     """
+#     async for item in async_iterator:
+#         sub_iter = ensure_async_iterator(item)
+#         async for sub_item in sub_iter:
+#             yield sub_item
+
+
+@transformer
+async def repeat(async_iterator: AsyncIterator[_T], n: int) -> AsyncIterator[_T]:
+    """Repeats each item in the stream `n` times.
+
+    Args:
+        async_iterator: The async iterable to repeat.
+        n: The number of times to repeat each item.
+
+    Examples:
+        >>> async def demo_repeat() -> None:
+        ...     async for item in range(3) / repeat(2):
+        ...         print(item)
+        >>> asyncio.run(demo_repeat())
+        0
+        0
+        1
+        1
+        2
+        2
+    """
+    async for item in async_iterator:
+        for _ in range(n):
+            yield item
+
+
+@transformer
+async def take(async_iterator: AsyncIterator[_T], n: int) -> AsyncIterator[_T]:
+    """Take the first `n` items from the stream.
+
+    Examples:
+        >>> async def demo_take() -> None:
+        ...     async for item in range(3) / take(2):
+        ...         print(item)
+        >>> asyncio.run(demo_take())
+        0
+        1
+    """
+    for _ in range(n):
+        yield await anext(async_iterator)
+
+
+@transformer
+async def drop(async_iterator: AsyncIterator[_T], n: int) -> AsyncIterator[_T]:
+    """Drop the first `n` items from the stream.
+
+    Examples:
+        >>> async def demo_drop() -> None:
+        ...     async for item in range(3) / drop(2):
+        ...         print(item)
+        >>> asyncio.run(demo_drop())
+        2
+    """
+    for _ in range(n):
+        await anext(async_iterator)
+    async for item in async_iterator:
+        yield item
+
+
+@transformer
+async def immediately_unique(
+    async_iterator: AsyncIterator[_T], key: Callable[[_T], Any] = lambda x: x
+) -> AsyncIterator[_T]:
+    """Yields only items that are unique from the previous item.
+
+    Examples:
+        >>> async def demo_immediately_unique_1() -> None:
+        ...     async for item in range(5) / repeat(3) / immediately_unique():
+        ...         print(item)
+        >>> asyncio.run(demo_immediately_unique_1())
+        0
+        1
+        2
+        3
+        4
+        >>> async def demo_immediately_unique_2() -> None:
+        ...     async for item in range(50) / immediately_unique(int.bit_length):
+        ...         print(item)
+        >>> asyncio.run(demo_immediately_unique_2())
+        0
+        1
+        2
+        4
+        8
+        16
+        32
+    """
+    prev = await anext(async_iterator)
+    yield prev
+    prev_key = key(prev)
+    async for item in async_iterator:
+        if (new_key := key(item)) != prev_key:
+            yield item
+            prev_key = new_key
+
+
+@transformer
+async def unique(
+    async_iterator: AsyncIterator[_T], key: Callable[[_T], Any] = lambda x: x
+) -> AsyncIterator[_T]:
+    """Yields only items that are unique across the stream.
+
+    Examples:
+        >>> async def demo_unique_1() -> None:
+        ...     async for item in Stream(range(5)) / repeat(3) / unique():
+        ...         print(item)
+        >>> asyncio.run(demo_unique_1())
+        0
+        1
+        2
+        3
+        4
+        >>> async def demo_unique_2() -> None:
+        ...     async for item in Stream(range(50, 103, 6)) / unique(lambda x: str(x)[0]):
+        ...         print(item)
+        >>> asyncio.run(demo_unique_2())
+        50
+        62
+        74
+        80
+        92
+    """
+    seen: set[Any] = set()
+    prev = await anext(async_iterator)
+    yield prev
+    seen.add(key(prev))
+    async for item in async_iterator:
+        if (new_key := key(item)) not in seen:
+            yield item
+            seen.add(new_key)

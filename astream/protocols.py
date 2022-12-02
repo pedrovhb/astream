@@ -33,7 +33,7 @@ from astream.stream_utils import (
     arepeat,
     atee,
 )
-from astream.utils import ensure_async_iterator, ensure_coro_fn
+from astream.utils import ensure_async_iterator, ensure_coroutine_function
 
 _R = TypeVar("_R")
 
@@ -195,7 +195,7 @@ class StreamLike(Protocol[_T], AsyncIterable[_T]):
             return NotImplemented
 
         async def _collect() -> _R:
-            coro_fn = cast(Callable[[list[_T]], _CoroT[_R]], ensure_coro_fn(other))
+            coro_fn = cast(Callable[[list[_T]], _CoroT[_R]], ensure_coroutine_function(other))
             return await coro_fn([item async for item in self])
 
         return _collect()
