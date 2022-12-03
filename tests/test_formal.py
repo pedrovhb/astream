@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import AsyncIterable, Iterable, Callable, TypeAlias, Any, Coroutine, Iterator, TypeVar
+from typing import Any, AsyncIterable, Callable, Coroutine, Iterable, Iterator, TypeAlias, TypeVar
 
 import pytest
 
-from astream import Stream
+from astream.stream import Stream
 
 _T = TypeVar("_T")
 _CoroT: TypeAlias = Coroutine[Any, Any, _T]

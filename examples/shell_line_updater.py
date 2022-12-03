@@ -1,13 +1,7 @@
 #! /usr/bin/env python
 import os
 
-from astream.stream_utils import (
-    from_stdin,
-    to_stdout,
-    delay,
-    interleave_with,
-    repeat_value,
-)
+from astream.stream_utils import delay, from_stdin, interleave_with, repeat_value, to_stdout
 from astream.utils import run_stream
 
 if __name__ == "__main__":

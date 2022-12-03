@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from asyncio import CancelledError
-from asyncio.queues import LifoQueue as AsyncioLifoQueue
-from asyncio.queues import PriorityQueue as AsyncioPriorityQueue
-from asyncio.queues import Queue as AsyncioQueue
+from asyncio.queues import (
+    LifoQueue as AsyncioLifoQueue,
+    PriorityQueue as AsyncioPriorityQueue,
+    Queue as AsyncioQueue,
+)
 from collections.abc import AsyncIterable
 from typing import Any, AsyncIterator, Coroutine, Iterable, TypeAlias, TypeVar
 
-from astream import Stream, ensure_async_iterator
+from .stream import Stream
+from .utils import ensure_async_iterator
 
 T = TypeVar("T")
 Coro: TypeAlias = Coroutine[Any, Any, T]

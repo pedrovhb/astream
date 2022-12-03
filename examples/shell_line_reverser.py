@@ -1,11 +1,7 @@
 #! /usr/bin/env python
 
 
-from astream.stream_utils import (
-    from_stdin,
-    to_stdout,
-    delay,
-)
+from astream.stream_utils import delay, from_stdin, to_stdout
 from astream.utils import run_stream
 
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -8,7 +9,7 @@ from asyncio import CancelledError
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, ClassVar
+from typing import ClassVar, Iterable
 
 import rich
 import typeguard
@@ -20,7 +21,7 @@ from pyre_check.client.configuration.configuration import PartialConfiguration
 from rich.abc import RichRenderable
 from rich.box import Box
 from rich.color import Color
-from rich.console import Console, ConsoleOptions, ConsoleRenderable, RenderResult, Group
+from rich.console import Console, ConsoleOptions, ConsoleRenderable, Group, RenderResult
 from rich.live import Live
 from rich.logging import RichHandler
 from rich.markdown import Heading
@@ -33,7 +34,7 @@ from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
 from rich.tree import Tree
-from watchfiles import PythonFilter, awatch, Change
+from watchfiles import awatch, Change, PythonFilter
 
 from astream.experimental.rdh_toolkit import RegexEqual, RegexEqualCase, RegexMatcher
 
@@ -67,12 +68,12 @@ def ide_focus_line_url(file: Path, line: int | None = None, column: int | None =
 
 
 def ide_focus_line(file: Path, line: int | None = None, column: int | None = None):
+    from urllib.error import HTTPError, URLError
     # URL request to open file in IDE, example:
     # "http://localhost:63342/api/file?file=/home/pedro/projs/astream/pyproject.toml&line=10&column=5"
 
     from urllib.parse import urlencode
     from urllib.request import Request, urlopen
-    from urllib.error import URLError, HTTPError
 
     url = "http://localhost:63342/api/file"
     params = {"file": file}

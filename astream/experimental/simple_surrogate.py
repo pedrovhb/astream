@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from copy import copy
 from dataclasses import dataclass, field
-from functools import partialmethod, cached_property
-from types import SimpleNamespace, CodeType
+from functools import cached_property, partialmethod
+from types import CodeType, SimpleNamespace
 from typing import *
 
 from executing import executing
 from sorcery.core import FrameInfo
 
-from astream import Stream, amap
+from astream import amap, Stream
 
 
 class SurrogateOperation(NamedTuple):
@@ -397,7 +397,7 @@ target = [12, 34, SimpleNamespace(some=3, something=47)]
 
 print(f"val is {dd(target)}")
 
-from astream import stream, apredicate_map, arange
+from astream import apredicate_map, arange, stream
 
 d = ({"abc": [0, SimpleNamespace(some=3, something=i, other={"cde": i ** 7})]} for i in range(20))
 

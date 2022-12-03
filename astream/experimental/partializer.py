@@ -2,7 +2,7 @@ import ast
 import inspect
 from fractions import Fraction
 from functools import partial
-from typing import Any, Callable, Generic, ParamSpec, TypeVar, cast
+from typing import Any, Callable, cast, Generic, ParamSpec, TypeVar
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Generic, TypeVar, Sequence
+from typing import Generic, Sequence, TypeVar
 
-from rich.console import Console, ConsoleRenderable, RenderResult, ConsoleOptions
+from rich.console import Console, ConsoleOptions, ConsoleRenderable, RenderResult
 from rich.segment import Segment
 
-from astream import Stream, arange_delayed
+from astream import arange_delayed, Stream
 from astream.experimental import TimeDeque
 
 _T = TypeVar("_T")

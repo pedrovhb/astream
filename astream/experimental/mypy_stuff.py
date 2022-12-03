@@ -4,17 +4,17 @@ import asyncio
 import atexit
 import re
 import shlex
+import typing
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
-import typing
 
 from loguru import logger
 from rich import box
 from rich.align import Align
-from rich.console import Console, RenderResult, ConsoleOptions, Group
+from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.live import Live
 from rich.logging import RichHandler
 from rich.measure import Measurement
@@ -23,7 +23,7 @@ from rich.panel import Panel
 from rich.segment import Segment
 from rich.style import Style
 from rich.syntax import Syntax
-from rich.table import Table, Column
+from rich.table import Column, Table
 from rich.text import Text
 from rich.tree import Tree
 from watchfiles import awatch, PythonFilter

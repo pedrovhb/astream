@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import statistics
-from datetime import datetime
 import math
 import random
+import statistics
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta
 from itertools import chain, cycle
 from statistics import mean
 from typing import Generic, Iterator, Sequence, TypeVar
 
 import rich
 from loguru import logger
-from rich.console import RenderResult, ConsoleOptions, Console, ConsoleRenderable, Group
+from rich.console import Console, ConsoleOptions, ConsoleRenderable, Group, RenderResult
 from rich.live import Live
 from rich.padding import Padding
 from rich.panel import Panel
@@ -24,8 +23,7 @@ from rich.table import Column
 from rich.text import Text
 from rich.tree import Tree
 
-from astream import Stream, arange_delayed, stream
-from astream import arange_delayed_sine
+from astream import arange_delayed, arange_delayed_sine, Stream, stream
 
 _T = TypeVar("_T")
 

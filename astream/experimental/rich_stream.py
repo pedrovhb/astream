@@ -2,21 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import random
-import statistics
 from collections import deque
-from datetime import datetime, timedelta
-from functools import partial
-from itertools import pairwise
+from datetime import datetime
 from typing import AsyncIterable, Callable, Generic, Iterable, TypeVar
+
+from experimental.stream_grouper import agroup_map
 
 from humanize import naturaldelta, precisedelta
 from rich.console import Console, ConsoleOptions, RenderResult
-from rich.live import Live
 from rich.segment import Segment
 
-from astream import NoValue, SentinelType, Stream, arange, iter_to_aiter
-from astream.stream_grouper import agroup_map
-from astream.stream_utils import aenumerate, amerge, arange_delayed
+from astream import NoValue, SentinelType, Stream
+from astream.stream_utils import aenumerate
 
 try:
     import uvloop

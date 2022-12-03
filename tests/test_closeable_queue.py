@@ -5,7 +5,6 @@ import asyncio
 import pytest
 
 from astream import closeable_queue
-from astream.closeable_queue import CloseableQueue
 
 
 # Test the CloseableQueue class in isolation
@@ -204,19 +203,3 @@ async def test_closeable_queue_async_iter_with_exception() -> None:
         # print(item)  # 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
         assert item == next(expected)
 
-
-@pytest.mark.asyncio
-async def test_closeable_queue_async_iter_with_exception() -> None:
-    queue = closeable_queue.CloseableQueue[int](maxsize=5)
-
-    async def fill_queue() -> None:
-        for i in range(10):
-            await queue.put(i)
-        queue.close()
-
-    asyncio.create_task(fill_queue())
-
-    expected = iter(range(10))
-    async for item in queue:
-        # print(item)  # 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-        assert item == next(expected)

@@ -2,41 +2,38 @@ from __future__ import annotations
 
 import asyncio
 import itertools
-import sys
-from collections import deque
-from functools import partial
+
+import math
 import random
+import sys
 from abc import abstractmethod
 from asyncio import Future, Queue, Task
+from collections import deque
 from datetime import timedelta
+from functools import partial
 from typing import (
     Any,
     AsyncIterable,
     AsyncIterator,
     Callable,
+    cast,
     Coroutine,
     Iterable,
+    Iterator,
+    Literal,
+    overload,
     ParamSpec,
     Protocol,
+    runtime_checkable,
     TypeAlias,
     TypeVar,
-    cast,
-    overload,
-    runtime_checkable,
-    Literal,
-    Iterator,
 )
 
-import math
+from .pure import aflatten
 
-from .sentinel import Sentinel, _NoValueT
-from .stream import transformer, FnTransformer, Transformer, Stream, stream, sink
-from .utils import (
-    ensure_async_iterator,
-    ensure_coroutine_function,
-    create_future,
-    iter_to_aiter,
-)
+from .sentinel import _NoValueT, Sentinel
+from .stream import FnTransformer, sink, Stream, stream, transformer, Transformer
+from .utils import create_future, ensure_async_iterator, ensure_coroutine_function, iter_to_aiter
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -106,6 +103,11 @@ def atee(
 def atee(
     iterable: AsyncIterable[_T] | Iterable[_T], n: Literal[4]
 ) -> tuple[Stream[_T], Stream[_T], Stream[_T], Stream[_T]]:
+    ...
+
+
+@overload
+def atee(iterable: AsyncIterable[_T] | Iterable[_T], n: int) -> tuple[Stream[_T], ...]:
     ...
 
 
@@ -351,23 +353,6 @@ async def ascan(
         yield crt
 
 
-@overload
-def aflatten(iterable: AsyncIterator[Iterable[_T]]) -> AsyncIterator[_T]:
-    ...
-
-
-@overload
-def aflatten(iterable: AsyncIterator[AsyncIterable[_T]]) -> AsyncIterator[_T]:
-    ...
-
-
-async def aflatten(
-    iterable: AsyncIterator[Iterable[_T]] | AsyncIterator[AsyncIterable[_T]],
-) -> AsyncIterator[_T]:
-    """Unpacks an async iterator of iterables or async iterables into a flat async iterator."""
-    async for item in iterable:
-        async for subitem in ensure_async_iterator(item):
-            yield subitem
 
 
 async def aconcatenate(
@@ -495,28 +480,6 @@ async def bytes_stream_split_separator(
                 break
     yield bytes(buf.strip(strip_characters_str))
 
-
-_AsyncIterableT = TypeVar("_AsyncIterableT", bound=AsyncIterable[Any])
-
-
-__all__ = (
-    "aconcatenate",
-    "aenumerate",
-    "aflatten",
-    "agetattr",
-    "agetitem",
-    "amerge",
-    "arange",
-    "arange_delayed",
-    "arange_delayed_random",
-    "arange_delayed_sine",
-    "arepeat",
-    "ascan",
-    "atee",
-    "azip",
-    "azip_longest",
-    "bytes_stream_split_separator",
-)
 
 
 async def _nwise(async_iterable: AsyncIterable[_T], n: int) -> AsyncIterator[tuple[_T, ...]]:
@@ -823,7 +786,8 @@ async def interleave_with(
         1
         3
     """
-    _async_iterators = {async_iterator, *(ensure_async_iterator(i) for i in iterables)}
+    _async_iterators: set[AsyncIterator[_T]] = {async_iterator}
+    _async_iterators.update(ensure_async_iterator(it) for it in iterables)  # type: ignore
     while True:
         for ait in _async_iterators:
             try:
@@ -941,3 +905,24 @@ async def to_stdout(
             out.buffer.write(line_separator)
             out.buffer.write(item)
             out.flush()
+
+aflatten = transformer(aflatten)
+
+__all__ = (
+    "aconcatenate",
+    "aenumerate",
+    "aflatten",
+    "agetattr",
+    "agetitem",
+    "amerge",
+    "arange",
+    "arange_delayed",
+    "arange_delayed_random",
+    "arange_delayed_sine",
+    "arepeat",
+    "ascan",
+    "atee",
+    "azip",
+    "azip_longest",
+    "bytes_stream_split_separator",
+)

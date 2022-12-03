@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
-from abc import ABC, ABCMeta
-from functools import wraps, singledispatch, partialmethod
+from functools import wraps
 from types import NotImplementedType
 from typing import *
 
-from .sentinel import Sentinel, _NoValueT
-from .utils import ensure_coroutine_function, ensure_async_iterator
+from .pure import aflatten
+from .sentinel import _NoValueT, Sentinel
+from .utils import ensure_async_iterator, ensure_coroutine_function
 
 _T = TypeVar("_T")
 _T_co = TypeVar("_T_co", covariant=True)
@@ -35,7 +34,6 @@ CoroFn: TypeAlias = Callable[_P, Coroutine[object, object, _T_co]]
 SyncFn: TypeAlias = Callable[_P, _T_co]
 EitherFn: TypeAlias = Union[CoroFn[_P, _T_co], SyncFn[_P, _T_co]]
 EitherIterable: TypeAlias = Union[Iterable[_T_co], AsyncIterable[_T_co]]
-
 
 # Out of ideas ¯\_(ツ)_/¯
 # Typing with just Iterable and AsyncIterable is not enough, mypy says
@@ -73,17 +71,11 @@ if TYPE_CHECKING:
     FlattenSignatureT: TypeAlias = Callable[["SomeIterable[_U]"], "Stream[_U]"]
 
 
-class _TransformerBaseMeta(Generic[_I, _O], type):
-    def transform(cls, _src: AsyncIterator[_I]) -> AsyncIterator[_O]:
-        print("TransformerMeta.transform")
-        return _src
+def _identity(x: _T) -> _T:
+    return x
 
 
-class _TransformerMeta(_TransformerBaseMeta, ABCMeta):
-    ...
-
-
-class Transformer(Generic[_I, _O], metaclass=_TransformerMeta):
+class Transformer(Generic[_I, _O]):
     def transform(self, src: AsyncIterable[_I]) -> AsyncIterator[_O]:
         raise NotImplementedError
 
@@ -372,9 +364,9 @@ class Stream(AsyncIterator[_T]):
     def __floordiv__(
         self,
         other: SyncFn[[_T], Iterable[_R]]
-        | CoroFn[[_T], Iterable[_R]]
-        | SyncFn[[_T], AsyncIterable[_R]]
-        | CoroFn[[_T], AsyncIterable[_R]],
+               | CoroFn[[_T], Iterable[_R]]
+               | SyncFn[[_T], AsyncIterable[_R]]
+               | CoroFn[[_T], AsyncIterable[_R]],
     ) -> Stream[_R]:
         """Flatten the stream using the given transformer."""
         return self.transform(FlatMap(other))
@@ -400,9 +392,17 @@ class Stream(AsyncIterator[_T]):
             return self.transform(Filter(other))
         return NotImplemented
 
-    def __pos__(self: SomeIterable[_T]) -> Stream[_T]:
+    @overload
+    def __pos__(self: Stream[AsyncIterable[_U]]) -> Stream[_U]:
+        ...
+
+    @overload
+    def __pos__(self: Stream[Iterable[_U]]) -> Stream[_U]:
+        ...
+
+    def __pos__(self: Stream[AsyncIterable[_U]] | Stream[Iterable[_U]]) -> Stream[_U]:
         """Flatten the stream."""
-        return self.transform(FlatMap(lambda x: x))
+        return Stream(aflatten(self))
 
 
 class Map(Transformer[_I, _O]):
@@ -442,9 +442,9 @@ class FlatMap(Transformer[_I, _O]):
     def __init__(
         self,
         fn: CoroFn[[_I], Iterable[_O]]
-        | CoroFn[[_I], AsyncIterable[_O]]
-        | SyncFn[[_I], Iterable[_O]]
-        | SyncFn[[_I], AsyncIterable[_O]],
+            | CoroFn[[_I], AsyncIterable[_O]]
+            | SyncFn[[_I], Iterable[_O]]
+            | SyncFn[[_I], AsyncIterable[_O]],
     ) -> None:
         self._fn = cast(
             Callable[[_I], Coroutine[Any, Any, Iterable[_O] | AsyncIterable[_O]]],

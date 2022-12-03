@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from collections import deque
-from typing import Any, Callable, ParamSpec, TypeVar, cast, overload
+from typing import Any, Callable, cast, overload, ParamSpec, TypeVar
 
 from astream import ensure_coroutine_function
 from astream.protocols.type_aliases import CoroT, R, T

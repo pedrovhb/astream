@@ -3,14 +3,13 @@ from __future__ import annotations
 import asyncio
 import math
 from collections import deque
-from datetime import timedelta, datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
-from typing import Iterable, Collection, Generic, TypeVar, Sequence
+from typing import Collection, Generic, Iterable, Sequence, TypeVar
 
 import rich
 from rich.color import Color
-from rich.console import Console
-from rich.console import ConsoleOptions, RenderResult, RenderableType
+from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.live import Live
 from rich.measure import Measurement
 from rich.padding import Padding
@@ -19,7 +18,7 @@ from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
 
-from astream import Stream, arange, arange_delayed
+from astream import arange, arange_delayed, Stream
 
 CHARACTERS_BAR_HOR = "▏▎▍▌▋▊▉█"
 CHARACTERS_BAR_VER = "▁▂▃▄▅▆▇█"
