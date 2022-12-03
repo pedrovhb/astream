@@ -28,8 +28,6 @@ def approximate_pi() -> Iterator[float]:
         estimate = 4.0 * within_circle / total_points
         if total_points % 10000 == 0:
             yield estimate
-        # time.sleep(0.00001)
-        # yield estimate
 
 
 T = TypeVar("T")

@@ -4,33 +4,16 @@ import asyncio
 import functools
 import time
 from asyncio import Future
-from queue import Queue
 from typing import *
-from typing import NewType
+
+from .sentinel import Sentinel, _RaiseExceptionT
 
 _T = TypeVar("_T")
+_U = TypeVar("_U")
 _R = TypeVar("_R")
 _P = ParamSpec("_P")
 _CoroT: TypeAlias = Coroutine[Any, Any, _T]
 _ItemAndFut: TypeAlias = Future[tuple[_T, "_ItemAndFut[_T]"]]
-
-
-class SentinelType:
-    pass
-
-
-class NoValueT:
-    """A singleton sentinel value to indicate no value."""
-
-    instance: NoValueT
-
-    def __new__(cls, *args, **kwargs):
-        if not hasattr(cls, "instance"):
-            cls.instance = super().__new__(cls, *args, **kwargs)
-        return cls.instance
-
-
-NoValue = NoValueT()
 
 
 def run_sync(f: Callable[_P, Coroutine[Any, Any, _T]]) -> Callable[_P, _T]:
@@ -193,13 +176,60 @@ def create_future() -> Future[_T]:
     return asyncio.get_running_loop().create_future()
 
 
+@overload
+def run_stream(
+    stream: AsyncIterable[_T],
+    if_empty: _RaiseExceptionT = Sentinel.RaiseException,
+) -> _T:
+    ...
+
+
+@overload
+def run_stream(
+    stream: AsyncIterable[_T],
+    if_empty: _U = ...,
+) -> _T | _U:
+    ...
+
+
+def run_stream(
+    stream: AsyncIterable[_T],
+    if_empty: _U | _RaiseExceptionT = Sentinel.RaiseException,
+) -> _T | _U:
+    """Run an async iterable to completion.
+
+    Args:
+        stream: The async iterable to run.
+        if_empty: The value to return if the stream is empty. Defaults to raising an exception.
+
+    Returns:
+        The last item yielded by the async iterable.
+
+    Raises:
+        ValueError: If the async iterable yields no items.
+
+    Examples:
+        >>> from astream.stream_utils import arange
+        >>> print(run_stream(arange(5) / (lambda x: x * 5)))
+    """
+
+    async def _runner(_stream: AsyncIterable[_T]) -> _T | _U:
+        item: _T | _U | _RaiseExceptionT = if_empty
+        async for item in _stream:
+            pass
+
+        if item is Sentinel.RaiseException:
+            raise ValueError("stream yielded no items")
+
+        return item
+
+    return asyncio.run(_runner(stream))
+
+
 __all__ = (
     "run_sync",
     "iter_to_aiter",
     "ensure_coroutine_function",
     "ensure_async_iterator",
     "create_future",
-    "SentinelType",
-    "NoValueT",
-    "NoValue",
 )

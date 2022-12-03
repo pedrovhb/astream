@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
+import sys
 from collections import deque
 from functools import partial
 import random
 from abc import abstractmethod
-from asyncio import Future, Queue
+from asyncio import Future, Queue, Task
 from datetime import timedelta
 from typing import (
     Any,
@@ -22,17 +24,18 @@ from typing import (
     overload,
     runtime_checkable,
     Literal,
+    Iterator,
 )
 
 import math
 
-from .stream import transformer, FnTransformer, Transformer, Stream, stream
+from .sentinel import Sentinel, _NoValueT
+from .stream import transformer, FnTransformer, Transformer, Stream, stream, sink
 from .utils import (
-    NoValue,
     ensure_async_iterator,
     ensure_coroutine_function,
-    NoValueT,
     create_future,
+    iter_to_aiter,
 )
 
 _T = TypeVar("_T")
@@ -85,24 +88,54 @@ async def agetattr(
         yield getattr(item, name)
 
 
+@overload
 def atee(
-    iterable: AsyncIterable[_T] | Iterable[_T],
-    n: int = 2,
-) -> tuple[AsyncIterator[_T], ...]:
+    iterable: AsyncIterable[_T] | Iterable[_T], n: Literal[2]
+) -> tuple[Stream[_T], Stream[_T]]:
+    ...
+
+
+@overload
+def atee(
+    iterable: AsyncIterable[_T] | Iterable[_T], n: Literal[3]
+) -> tuple[Stream[_T], Stream[_T], Stream[_T]]:
+    ...
+
+
+@overload
+def atee(
+    iterable: AsyncIterable[_T] | Iterable[_T], n: Literal[4]
+) -> tuple[Stream[_T], Stream[_T], Stream[_T], Stream[_T]]:
+    ...
+
+
+def atee(iterable: AsyncIterable[_T] | Iterable[_T], n: int = 2) -> tuple[Stream[_T], ...]:
     """An asynchronous version of `tee`."""
 
     # futs: dict[Future[None], Queue[_T]] = {create_future(): Queue() for _ in range(n)}
     queues: tuple[Queue[_T], ...] = tuple(Queue() for _ in range(n))
-    done_future: Future[None] = create_future()
+
+    # Initially future is None so we can run atee before there is a running event loop
+    done_future: Future[None] | None = None
+    feeder_task: Task[None] | None = None
 
     async def _tee_feeder() -> None:
+        nonlocal done_future
+        assert done_future is not None
         _iterable = ensure_async_iterator(iterable)
         async for item in _iterable:
             for queue in queues:
                 queue.put_nowait(item)
         done_future.set_result(None)
 
+    @stream
     async def _tee(queue: Queue[_T]) -> AsyncIterator[_T]:
+        nonlocal done_future, feeder_task
+        if done_future is None:
+            done_future = create_future()
+        if feeder_task is None:
+            feeder_task = asyncio.create_task(_tee_feeder())
+
         while True:
             done, pending = await asyncio.wait(
                 (done_future, get_task := asyncio.create_task(queue.get())),
@@ -120,7 +153,6 @@ def atee(
                     yield item
                 break
 
-    asyncio.create_task(_tee_feeder())
     return tuple(_tee(queue) for queue in queues)
 
 
@@ -282,7 +314,7 @@ def amerge(*async_iters: Iterable[_T] | AsyncIterable[_T]) -> AsyncIterator[_T]:
 async def ascan(
     iterable: AsyncIterable[_U],
     fn: Callable[[_T, _U], Coroutine[Any, Any, _T]] | Callable[[_T, _U], _T],
-    initial: _T | NoValueT = NoValue,
+    initial: _T | _NoValueT = Sentinel.NoValue,
 ) -> AsyncIterator[_T]:
     """An asynchronous version of `scan`.
 
@@ -306,11 +338,11 @@ async def ascan(
         10
     """
     _fn_async = cast(Callable[[_T, _U], Coroutine[Any, Any, _T]], ensure_coroutine_function(fn))
-    _it_async = ensure_async_iterator(iterable)
+    _it_async: AsyncIterator[_U] = ensure_async_iterator(iterable)
 
-    if isinstance(initial, NoValueT):
-        initial = await anext(_it_async)
-    crt = cast(_T, initial)
+    if initial is Sentinel.NoValue:
+        initial = cast(_T, await anext(_it_async))
+    crt = initial
 
     yield crt
 
@@ -412,10 +444,10 @@ async def azip_longest(
     """An asynchronous version of `zip_longest`."""
     async_iterables = [ensure_async_iterator(it) for it in iterables]
     while True:
-        items = await asyncio.gather(*(anext(it, NoValue) for it in async_iterables))
-        if all(item is NoValue for item in items):
+        items = await asyncio.gather(*(anext(it, Sentinel.NoValue) for it in async_iterables))
+        if all(item is Sentinel.NoValue for item in items):
             break
-        yield tuple(item if item is not NoValue else fillvalue for item in items)
+        yield tuple(item if item is not Sentinel.NoValue else fillvalue for item in items)
 
 
 @transformer
@@ -485,13 +517,6 @@ __all__ = (
     "azip_longest",
     "bytes_stream_split_separator",
 )
-
-
-def int_to_str(x: int) -> float:
-    return str(x)
-
-
-## new style
 
 
 async def _nwise(async_iterable: AsyncIterable[_T], n: int) -> AsyncIterator[tuple[_T, ...]]:
@@ -590,6 +615,30 @@ async def repeat(async_iterator: AsyncIterator[_T], n: int) -> AsyncIterator[_T]
     async for item in async_iterator:
         for _ in range(n):
             yield item
+
+
+@stream
+def repeat_value(value: _T, n: int | None = None) -> Iterator[_T]:
+    """Repeats a value `n` times.
+
+    Args:
+        value: The value to repeat.
+        n: The number of times to repeat the value. If `None`, repeats forever.
+
+    Examples:
+        >>> async def demo_repeat_value() -> None:
+        ...     async for item in repeat_value(3, 2):
+        ...         print(item)
+        >>> asyncio.run(demo_repeat_value())
+        3
+        3
+    """
+    if n is None:
+        while True:
+            yield value
+    else:
+        for _ in range(n):
+            yield value
 
 
 @transformer
@@ -696,3 +745,199 @@ async def unique(
         if (new_key := key(item)) not in seen:
             yield item
             seen.add(new_key)
+
+
+@transformer
+async def delay(async_iterator: AsyncIterator[_T], delay: float) -> AsyncIterator[_T]:
+    """Delay each item in the stream by `delay` seconds.
+
+    Args:
+        delay: The number of seconds to delay each item.
+
+    Examples:
+        >>> async def demo_delay() -> None:
+        ...     async for item in range(3) / delay(0.5):
+        ...         print(item)
+        >>> asyncio.run(demo_delay())
+        0
+        1
+        2
+    """
+    async for item in async_iterator:
+        await asyncio.sleep(delay)
+        yield item
+
+
+@stream
+async def interleave(
+    *iterables: Iterable[_T] | AsyncIterable[_T],
+) -> AsyncIterator[_T]:
+    """Interleave items from multiple async iterables.
+
+    Args:
+        *async_iterators: The async iterables to interleave.
+
+    Returns:
+        An async iterable of the interleaved items.
+
+    Examples:
+        >>> async def demo_interleave() -> None:
+        ...     async for item in interleave(range(2), range(2, 4)):
+        ...         print(item)
+        >>> asyncio.run(demo_interleave())
+        0
+        2
+        1
+        3
+    """
+    _async_iterators = [ensure_async_iterator(i) for i in iterables]
+    while True:
+        for async_iterator in _async_iterators:
+            try:
+                yield await anext(async_iterator)
+            except StopAsyncIteration:
+                return
+
+
+@transformer
+async def interleave_with(
+    async_iterator: AsyncIterator[_T],
+    *iterables: Iterable[_U] | AsyncIterable[_U],
+    stop_on_first_empty: bool = False,
+) -> AsyncIterator[_T | _U]:
+    """Interleave items from multiple async iterables.
+
+    Args:
+        *async_iterators: The async iterables to interleave.
+
+    Returns:
+        An async iterable of the interleaved items.
+
+    Examples:
+        >>> async def demo_interleave_with() -> None:
+        ...     async for item in range(2) / interleave_with(range(2, 4)):
+        ...         print(item)
+        >>> asyncio.run(demo_interleave_with())
+        0
+        2
+        1
+        3
+    """
+    _async_iterators = {async_iterator, *(ensure_async_iterator(i) for i in iterables)}
+    while True:
+        for ait in _async_iterators:
+            try:
+                yield await anext(ait)
+            except StopAsyncIteration:
+                if stop_on_first_empty:
+                    return
+                _async_iterators.remove(ait)
+
+
+@transformer
+async def interleave_with_values(
+    async_iterator: AsyncIterator[_T],
+    *values: _T,
+) -> AsyncIterator[_T]:
+    """Interleave items from multiple async iterables.
+
+    Args:
+        *async_iterators: The async iterables to interleave.
+
+    Returns:
+        An async iterable of the interleaved items.
+
+    Examples:
+        >>> async def demo_interleave_with_values() -> None:
+        ...     async for item in range(2) / interleave_with_values(2, 3):
+        ...         print(item)
+        >>> asyncio.run(demo_interleave_with_values())
+        0
+        2
+        1
+        3
+    """
+    async for i in interleave(async_iterator, *(itertools.repeat(v) for v in values)):
+        yield i
+
+
+@transformer
+async def call_and_passthrough(
+    async_iterator: AsyncIterator[_T],
+    func: Callable[[_T], Any] | Callable[[_T], Coroutine[Any, Any, Any]],
+) -> AsyncIterator[_T]:
+    """Call a function on each item in the stream and yield the item.
+
+    Args:
+        func: The function to call on each item.
+
+    Examples:
+        >>> async def demo_call_and_passthrough() -> None:
+        ...     async for item in range(3) / call_and_passthrough(print):
+        ...         print(item)
+        >>> asyncio.run(demo_call_and_passthrough())
+        0
+        0
+        1
+        1
+        2
+        2
+    """
+    _func = ensure_coroutine_function(func)
+    async for item in async_iterator:
+        await _func(item)
+        yield item
+
+
+@stream
+async def from_stdin(
+    line_separator: bytes = b"\n",
+    strip_characters: tuple[bytes, ...] = (),
+) -> AsyncIterator[bytes]:
+    """Read lines from stdin.
+
+    Examples:
+        >>> async def demo_stdin() -> None:
+        ...     async for line in from_stdin():
+        ...         print(line)
+        >>> asyncio.run(demo_stdin())
+        hello
+        world
+    """
+    async for line in Stream(iter_to_aiter(sys.stdin)) / str.encode / bytes_stream_split_separator(
+        separator=line_separator, strip_characters=strip_characters
+    ):
+        yield line
+
+
+@sink
+async def to_stdout(
+    async_iterator: AsyncIterator[bytes],
+    line_separator: bytes = b"\n",
+    redirect_stdout: bool = False,
+) -> None:
+    """Write lines to stdout.
+
+    Examples:
+        >>> async def demo_to_stdout() -> None:
+        ...     await Stream([b"hello", b"world"]) / to_stdout()
+        >>> asyncio.run(demo_to_stdout())
+        hello
+        world
+    """
+    out = sys.stdout
+    if redirect_stdout:
+        sys.stdout = sys.stderr
+
+    # Write to stdout. On the first iteration, we don't print the separator.
+    # On subsequent iterations, print a newline, and then the contents.
+    try:
+        out.buffer.write(await anext(async_iterator))
+        out.flush()
+    except StopAsyncIteration:
+        pass
+    else:
+        async for item in async_iterator:
+            out.buffer.write(line_separator)
+            out.buffer.write(item)
+            out.flush()

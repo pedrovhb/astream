@@ -13,7 +13,8 @@ from typing import (
     cast,
 )
 
-from .utils import NoValue, SentinelType, ensure_async_iterator, ensure_coroutine_function
+from .utils import ensure_async_iterator, ensure_coroutine_function
+from .sentinel import _NoValueT, Sentinel
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -23,7 +24,7 @@ _CoroT: TypeAlias = Coroutine[Any, Any, _T]
 async def areduce(
     fn: Callable[[_T, _U], _CoroT[_T]] | Callable[[_T, _U], _T],
     iterable: AsyncIterable[_U],
-    initial: _T | SentinelType = NoValue,
+    initial: _T | _NoValueT = Sentinel.NoValue,
 ) -> _T:
     """An asynchronous version of `reduce`.
 
@@ -50,7 +51,7 @@ async def areduce(
     _fn_async = ensure_coroutine_function(fn)
     _it_async = ensure_async_iterator(iterable)
 
-    if initial is NoValue:
+    if initial is Sentinel.NoValue:
         initial = await anext(_it_async)  # type: ignore
     crt = cast(_T, initial)
 

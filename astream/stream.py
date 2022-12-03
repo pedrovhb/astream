@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
-from abc import ABC
-from functools import wraps, singledispatch
+from abc import ABC, ABCMeta
+from functools import wraps, singledispatch, partialmethod
 from types import NotImplementedType
 from typing import *
 
+from .sentinel import Sentinel, _NoValueT
 from .utils import ensure_coroutine_function, ensure_async_iterator
 
 _T = TypeVar("_T")
@@ -71,7 +73,17 @@ if TYPE_CHECKING:
     FlattenSignatureT: TypeAlias = Callable[["SomeIterable[_U]"], "Stream[_U]"]
 
 
-class Transformer(Generic[_I, _O], ABC):
+class _TransformerBaseMeta(Generic[_I, _O], type):
+    def transform(cls, _src: AsyncIterator[_I]) -> AsyncIterator[_O]:
+        print("TransformerMeta.transform")
+        return _src
+
+
+class _TransformerMeta(_TransformerBaseMeta, ABCMeta):
+    ...
+
+
+class Transformer(Generic[_I, _O], metaclass=_TransformerMeta):
     def transform(self, src: AsyncIterable[_I]) -> AsyncIterator[_O]:
         raise NotImplementedError
 
@@ -276,57 +288,70 @@ class Transformer(Generic[_I, _O], ABC):
     # todo - __lshift__ (should be the same as __rtruediv__ but with the arguments reversed)
 
 
+async def _consume(async_iterable: AsyncIterable[Any]) -> None:
+    async for _ in async_iterable:
+        pass
+
+
+_StreamT = TypeVar("_StreamT", bound="Stream[Any]")
+_StreamTA: TypeAlias = Type["Stream[_T]"]
+
+
 class Stream(AsyncIterator[_T]):
-    def __init__(self, src: EitherIterable[_T]) -> None:
-        self._src = ensure_async_iterator(src)
+    def __init__(self, src: AsyncIterable[_T] | Iterable[_T]) -> None:
+        self._src: AsyncIterator[_T] = ensure_async_iterator(src)
+        self._finished: asyncio.Future[_T | _NoValueT] = asyncio.get_event_loop().create_future()
+        self._prev_element: _T | _NoValueT = Sentinel.NoValue
 
     def __aiter__(self) -> AsyncIterator[_T]:
         return self
 
     async def __anext__(self) -> _T:
-        return await self._src.__anext__()
+        element = await anext(self._src)
+        self._prev_element = element
+        return element
 
-    def transform(self, transformer: Transformer[_T, _R]) -> Stream[_R]:
-        cls_ = cast(Type[Stream[_R]], type(self))
-        return cls_(transformer.transform(self))
+    def __await__(self) -> Generator[Any, None, _T | _NoValueT]:
+        result = yield from self._finished.__await__()
+        return result
+
+    async def run(self) -> _T | _NoValueT:
+        async for _ in self:
+            pass
+        return self._prev_element
 
     @overload
-    def __truediv__(self, other: Transformer[_T, _R]) -> Stream[_R]:
+    def transform(self, transform: Transformer[_T, _R]) -> Stream[_R]:
         ...
 
     @overload
-    def __truediv__(self, other: CoroFn[[_T], _R]) -> Stream[_R]:
+    def transform(self, transform: CoroFn[[_T], _R]) -> Stream[_R]:
         ...
 
     @overload
-    def __truediv__(self, other: SyncFn[[_T], _R]) -> Stream[_R]:
+    def transform(self, transform: SyncFn[[_T], _R]) -> Stream[_R]:
         ...
 
-    @overload
-    def __truediv__(self, other: object) -> Stream[_R] | NotImplementedType:
-        ...
+    def transform(
+        self, transform: Transformer[_T, _R] | CoroFn[[_T], _R] | SyncFn[[_T], _R]
+    ) -> Stream[_R]:
 
-    def __truediv__(
-        self, other: Transformer[_T, _R] | SyncFn[[_T], _R] | CoroFn[[_T], _R] | object
-    ) -> Stream[_R] | NotImplementedType:
-        """Map the stream using the given function or transformer."""
+        t: Transformer[_T, _R]
 
         # Stream / Transformer -> Stream @ Transformer -> Stream
-        if _no_param_transformer := getattr(other, "_no_param_transformer", None):
-            # Allow for `Stream / Transformer` syntax when the given transformer can be
-            # instantiated with no arguments, e.g. `Stream / pairwise` vs. `Stream / pairwise()`
-            _no_param_transformer = cast(type[Transformer[_T, _R]], other)
-            return self.transform(_no_param_transformer())
-
-        # Stream / Transformer -> Stream @ Transformer -> Stream
-        if isinstance(other, Transformer):
-            return self.transform(other)
+        if isinstance(transform, Transformer):
+            t = transform
 
         # Stream / Callable -> Map(Callable) @ Stream -> Stream
-        if callable(other):
-            return self.transform(Map(other))
+        elif callable(transform):
+            t = Map(transform)
 
-        return NotImplemented
+        else:
+            raise TypeError(f"Expected a Transformer or Callable, got {type(transform)}")
+
+        return Stream(t.transform(self))
+
+    __truediv__ = transform
 
     @overload
     def __floordiv__(self, other: CoroFn[[_T], Iterable[_R]]) -> Stream[_R]:
@@ -473,20 +498,51 @@ class FnTransformer(Transformer[_I, _O]):
             yield item
 
 
+class SinkTransformer(Transformer[_I, _O]):
+    def __init__(self, sink_fn: Callable[[AsyncIterator[_I]], Coroutine[Any, Any, _O]]) -> None:
+        self._sink = sink_fn
+
+    async def transform(self, src: AsyncIterable[_I]) -> AsyncIterator[_O]:
+        yield await self._sink(aiter(src))
+
+
 def transformer(
-    _fn: Callable[Concatenate[AsyncIterator[_I], _P], AsyncIterator[_O]]
-) -> Callable[_P, FnTransformer[_I, _O]]:
+    _fn: Callable[Concatenate[AsyncIterator[_A], _P], AsyncIterator[_B]]
+) -> Callable[_P, FnTransformer[_A, _B]]:
     # todo - make fns with no arguments other than the async iterable be usable without calling,
     #  e.g. arange(10) / pairwise
     #  probably by wrapping the function with a metaclass
     @wraps(_fn)
-    def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> FnTransformer[_I, _O]:
-        def _inner(_src: AsyncIterator[_I]) -> AsyncIterator[_O]:
+    def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> FnTransformer[_A, _B]:
+        def _inner(_src: AsyncIterator[_A]) -> AsyncIterator[_B]:
             return _fn(_src, *__args, **__kwargs)
 
         return FnTransformer(_inner)
 
     return _outer
+
+
+def sink(
+    _fn: Callable[Concatenate[AsyncIterator[_I], _P], Coroutine[Any, Any, _O]]
+) -> Callable[_P, SinkTransformer[_I, _O]]:
+    @wraps(_fn)
+    def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> SinkTransformer[_I, _O]:
+        def _inner(_src: AsyncIterator[_I]) -> Coroutine[Any, Any, _O]:
+            return _fn(_src, *__args, **__kwargs)
+
+        return SinkTransformer(_inner)
+
+    return _outer
+
+
+@overload
+def stream(__fn: Callable[_P, AsyncIterable[_O]]) -> Callable[_P, Stream[_O]]:
+    ...
+
+
+@overload
+def stream(__fn: Callable[_P, Iterable[_O]]) -> Callable[_P, Stream[_O]]:
+    ...
 
 
 def stream(__fn: Callable[_P, AsyncIterable[_O] | Iterable[_O]]) -> Callable[_P, Stream[_O]]:
@@ -507,4 +563,5 @@ __all__ = [
     "FnTransformer",
     "transformer",
     "stream",
+    "sink",
 ]
