@@ -165,7 +165,6 @@ def ensure_async_iterator(iterable: Iterable[_T] | AsyncIterable[_T]) -> AsyncIt
     Returns:
         An async iterable that runs the original iterable.
     """
-
     if isinstance(iterable, AsyncIterable):
         return aiter(iterable)
 

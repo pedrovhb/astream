@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from functools import wraps
 from types import NotImplementedType
 from typing import *
@@ -299,18 +300,37 @@ class Stream(AsyncIterator[_T]):
         return self
 
     async def __anext__(self) -> _T:
-        element = await anext(self._src)
-        self._prev_element = element
-        return element
+        try:
+            element = await anext(self._src)
+            self._prev_element = element
+            return element
+        except GeneratorExit:
+            self._finished.set_result(self._prev_element)
+            raise
 
-    def __await__(self) -> Generator[Any, None, _T | _NoValueT]:
-        result = yield from self._finished.__await__()
+    def __await__(self) -> Generator[Any, None, _T]:
+        result = yield from self.run().__await__()
         return result
 
-    async def run(self) -> _T | _NoValueT:
+    async def run(self) -> _T:
         async for _ in self:
             pass
+        if self._prev_element is Sentinel.NoValue:
+            raise ValueError("Stream is empty")
         return self._prev_element
+
+    async def reduce(
+        self,
+        reducer: SyncFn[[_T, _T], _T],  # todo - accept async reducer
+        initial: _T | _NoValueT = Sentinel.NoValue,
+    ) -> _T:
+        if initial is Sentinel.NoValue:
+            initial = await anext(self._src)
+
+        total = initial
+        async for element in self:
+            total = reducer(total, element)
+        return total
 
     @overload
     def transform(self, transform: Transformer[_T, _R]) -> Stream[_R]:
@@ -364,9 +384,9 @@ class Stream(AsyncIterator[_T]):
     def __floordiv__(
         self,
         other: SyncFn[[_T], Iterable[_R]]
-               | CoroFn[[_T], Iterable[_R]]
-               | SyncFn[[_T], AsyncIterable[_R]]
-               | CoroFn[[_T], AsyncIterable[_R]],
+        | CoroFn[[_T], Iterable[_R]]
+        | SyncFn[[_T], AsyncIterable[_R]]
+        | CoroFn[[_T], AsyncIterable[_R]],
     ) -> Stream[_R]:
         """Flatten the stream using the given transformer."""
         return self.transform(FlatMap(other))
@@ -442,9 +462,9 @@ class FlatMap(Transformer[_I, _O]):
     def __init__(
         self,
         fn: CoroFn[[_I], Iterable[_O]]
-            | CoroFn[[_I], AsyncIterable[_O]]
-            | SyncFn[[_I], Iterable[_O]]
-            | SyncFn[[_I], AsyncIterable[_O]],
+        | CoroFn[[_I], AsyncIterable[_O]]
+        | SyncFn[[_I], Iterable[_O]]
+        | SyncFn[[_I], AsyncIterable[_O]],
     ) -> None:
         self._fn = cast(
             Callable[[_I], Coroutine[Any, Any, Iterable[_O] | AsyncIterable[_O]]],
@@ -493,8 +513,8 @@ class FnTransformer(Transformer[_I, _O]):
 
     async def transform(self, src: EitherIterable[_I]) -> AsyncIterator[_O]:
         # todo - accept EitherIterable for any transform?
-        src = ensure_async_iterator(src)
-        async for item in self._fn(src):
+        _async_iterator_src = ensure_async_iterator(src)
+        async for item in self._fn(_async_iterator_src):
             yield item
 
 
@@ -522,33 +542,56 @@ def transformer(
     return _outer
 
 
+@overload
 def sink(
     _fn: Callable[Concatenate[AsyncIterator[_I], _P], Coroutine[Any, Any, _O]]
-) -> Callable[_P, SinkTransformer[_I, _O]]:
-    @wraps(_fn)
-    def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> SinkTransformer[_I, _O]:
-        def _inner(_src: AsyncIterator[_I]) -> Coroutine[Any, Any, _O]:
-            return _fn(_src, *__args, **__kwargs)
+) -> Callable[_P, Callable[[AsyncIterator[_I]], Coroutine[Any, Any, _O]]]:
+    ...
 
-        return SinkTransformer(_inner)
+
+@overload
+def sink(
+    _fn: Callable[Concatenate[AsyncIterator[_I], _P], _O]
+) -> Callable[_P, Callable[[AsyncIterator[_I]], Coroutine[Any, Any, _O]]]:
+    ...
+
+
+def sink(
+    _fn: Callable[Concatenate[AsyncIterator[_I], _P], _O]
+    | Callable[Concatenate[AsyncIterator[_I], _P], Coroutine[Any, Any, _O]]
+) -> Callable[_P, Callable[[AsyncIterator[_I]], Coroutine[Any, Any, _O]]]:
+
+    _async_fn = cast(CoroFn[Concatenate[AsyncIterator[_I], _P], _O], ensure_coroutine_function(_fn))
+
+    @wraps(_fn)
+    def _outer(
+        *__args: _P.args, **__kwargs: _P.kwargs
+    ) -> Callable[[AsyncIterator[_I]], Coroutine[Any, Any, _O]]:
+        async def _inner(_src: AsyncIterator[_I]) -> _O:
+            print("sink inner")
+            return await _async_fn(_src, *__args, **__kwargs)
+
+        return _inner
 
     return _outer
 
 
 @overload
-def stream(__fn: Callable[_P, AsyncIterable[_O]]) -> Callable[_P, Stream[_O]]:
+def stream(__fn: Callable[_P, Iterable[_T]]) -> Callable[_P, Stream[_T]]:
     ...
 
 
 @overload
-def stream(__fn: Callable[_P, Iterable[_O]]) -> Callable[_P, Stream[_O]]:
+def stream(__fn: Callable[_P, AsyncIterable[_T]]) -> Callable[_P, Stream[_T]]:
     ...
 
 
-def stream(__fn: Callable[_P, AsyncIterable[_O] | Iterable[_O]]) -> Callable[_P, Stream[_O]]:
+def stream(
+    __fn: Callable[_P, AsyncIterable[_T]] | Callable[_P, Iterable[_T]]
+) -> Callable[_P, Stream[_T]]:
     @wraps(__fn)
-    def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> Stream[_O]:
-        return Stream(ensure_async_iterator(__fn(*__args, **__kwargs)))
+    def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> Stream[_T]:
+        return Stream(__fn(*__args, **__kwargs))
 
     return _outer
 

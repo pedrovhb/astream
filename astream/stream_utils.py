@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import abc
 import asyncio
+import heapq
 import itertools
 
 import math
 import random
-import sys
 from abc import abstractmethod
 from asyncio import Future, Queue, Task
 from collections import deque
@@ -29,11 +30,11 @@ from typing import (
     TypeVar,
 )
 
-from .pure import aflatten
+from .pure import aflatten as _pure_aflatten
 
 from .sentinel import _NoValueT, Sentinel
-from .stream import FnTransformer, sink, Stream, stream, transformer, Transformer
-from .utils import create_future, ensure_async_iterator, ensure_coroutine_function, iter_to_aiter
+from .stream import FnTransformer, Stream, stream, transformer, Transformer
+from .utils import create_future, ensure_async_iterator, ensure_coroutine_function
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -353,8 +354,6 @@ async def ascan(
         yield crt
 
 
-
-
 async def aconcatenate(
     *iterables: Iterable[_T] | AsyncIterable[_T],
 ) -> AsyncIterator[_T]:
@@ -438,15 +437,15 @@ async def azip_longest(
 @transformer
 async def bytes_stream_split_separator(
     stream: AsyncIterable[bytes],
-    separator: bytes = b"\n",
-    strip_characters: tuple[bytes, ...] = (b"\r", b"\n", b"\t", b" ", b"\x00", b"\x0b", b"\x0c"),
+    separator: bytes = b"\n",  # todo - match behavior of separator to Python's universal newlines
+    keep_separator: bool = False,
 ) -> AsyncIterator[bytes]:
     """Splits a stream of bytes by a separator.
 
     Args:
         stream: The stream of bytes.
         separator: The separator to split by.
-        strip_characters: The characters to strip from the end/beginning of the split.
+        keep_separator: Whether to keep the separator in the output.
 
     Yields:
         The split bytes.
@@ -467,19 +466,20 @@ async def bytes_stream_split_separator(
     # b"\x0b" and b"\x0c" are vertical and form feed characters, which are used to terminate
     # strings in some languages. They are also used to separate pages in some terminal emulators.
 
-    strip_characters_str = b"".join(strip_characters)
     buf = bytearray()
     async for chunk in stream:
         buf.extend(chunk)
         while True:
             line, sep, remaining = buf.partition(separator)
             if sep:
-                yield bytes(line.strip(strip_characters_str))
+                if keep_separator:
+                    yield bytes(line) + sep
+                else:
+                    yield bytes(line)
                 buf = bytearray(remaining)
             else:
                 break
-    yield bytes(buf.strip(strip_characters_str))
-
+    yield bytes(buf)
 
 
 async def _nwise(async_iterable: AsyncIterable[_T], n: int) -> AsyncIterator[tuple[_T, ...]]:
@@ -853,60 +853,96 @@ async def call_and_passthrough(
         yield item
 
 
-@stream
-async def from_stdin(
-    line_separator: bytes = b"\n",
-    strip_characters: tuple[bytes, ...] = (),
-) -> AsyncIterator[bytes]:
-    """Read lines from stdin.
+_SupportsLessThanT = TypeVar("_SupportsLessThanT", bound="SupportsLessThan")
+
+
+@runtime_checkable
+class SupportsLessThan(Protocol):
+    __slots__ = ()
+
+    @abc.abstractmethod
+    def __lt__(self: _SupportsLessThanT, other: _SupportsLessThanT) -> bool:
+        ...
+
+
+def identity(x: _T) -> _T:
+    return x
+
+
+@transformer
+async def top_k(
+    async_iterator: AsyncIterator[_T],
+    k: int,
+    key: Callable[[_T], Any] | None = None,
+    on_tie: Literal["keep_first", "keep_last"] = "keep_first",
+) -> AsyncIterator[tuple[_T, ...]]:
+    """Yield the top `k` items in the stream.
+
+    Args:
+        k: The number of items to yield.
+        key: The key to sort by.
 
     Examples:
-        >>> async def demo_stdin() -> None:
-        ...     async for line in from_stdin():
-        ...         print(line)
-        >>> asyncio.run(demo_stdin())
-        hello
-        world
+        >>> async def demo_top_k() -> None:
+        ...     async for item in range(10) / top_k(3):
+        ...         print(item)
+        >>> asyncio.run(demo_top_k())
+        9
+        8
+        7
     """
-    async for line in Stream(iter_to_aiter(sys.stdin)) / str.encode / bytes_stream_split_separator(
-        separator=line_separator, strip_characters=strip_characters
-    ):
-        yield line
+    heap: list[tuple[_T | Any, int, _T]] = []
+    insertion_counter = 0
+
+    async for item in async_iterator:
+
+        insertion_counter += 1
+        key_value = key(item) if key else item
+        if on_tie == "keep_first":
+            idx = (key_value, insertion_counter, item)
+        else:
+            idx = (key_value, -insertion_counter, item)
+
+        if len(heap) < k:
+            heapq.heappush(heap, idx)
+        else:
+            heapq.heappushpop(heap, idx)
+
+        top = heapq.nlargest(k, heap)
+        yield tuple(elem[2] for elem in top)
 
 
-@sink
-async def to_stdout(
-    async_iterator: AsyncIterator[bytes],
-    line_separator: bytes = b"\n",
-    redirect_stdout: bool = False,
-) -> None:
-    """Write lines to stdout.
+@transformer
+async def partition_by_element(
+    async_iterator: AsyncIterator[_T],
+    separator: _T,
+) -> AsyncIterator[list[_T]]:
+    """Group items into partitions separated by a specified element.
+
+    Args:
+        async_iterator: The async iterable to group.
+        separator: The element to use as a separator.
 
     Examples:
-        >>> async def demo_to_stdout() -> None:
-        ...     await Stream([b"hello", b"world"]) / to_stdout()
-        >>> asyncio.run(demo_to_stdout())
-        hello
-        world
+        >>> async def demo_group_partitions() -> None:
+        ...     async for item in range(10) / partition_by_element(5):
+        ...         print(item)
+        >>> asyncio.run(demo_group_partitions())
+        [0, 1, 2, 3, 4]
+        [5, 6, 7, 8, 9]
     """
-    out = sys.stdout
-    if redirect_stdout:
-        sys.stdout = sys.stderr
+    partition: list[_T] = []
+    async for item in async_iterator:
+        if item == separator:
+            yield partition
+            partition = []
+        else:
+            partition.append(item)
+    if partition:
+        yield partition
 
-    # Write to stdout. On the first iteration, we don't print the separator.
-    # On subsequent iterations, print a newline, and then the contents.
-    try:
-        out.buffer.write(await anext(async_iterator))
-        out.flush()
-    except StopAsyncIteration:
-        pass
-    else:
-        async for item in async_iterator:
-            out.buffer.write(line_separator)
-            out.buffer.write(item)
-            out.flush()
 
-aflatten = transformer(aflatten)
+aflatten = transformer(_pure_aflatten)
 
 __all__ = (
     "aconcatenate",
@@ -925,4 +961,7 @@ __all__ = (
     "azip",
     "azip_longest",
     "bytes_stream_split_separator",
+    "call_and_passthrough",
+    "top_k",
+    "partition_by_element",
 )

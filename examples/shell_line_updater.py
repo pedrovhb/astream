@@ -1,7 +1,8 @@
 #! /usr/bin/env python
 import os
 
-from astream.stream_utils import delay, from_stdin, interleave_with, repeat_value, to_stdout
+from astream.stream_utils import delay, interleave_with, repeat_value, to_stdout
+from sources import from_stdin_raw
 from astream.utils import run_stream
 
 if __name__ == "__main__":
@@ -12,6 +13,6 @@ if __name__ == "__main__":
     result = run_stream(
         repeat_value(b" " * terminal_width)
         / delay(0.5)
-        / interleave_with(from_stdin(), stop_on_first_empty=True)
+        / interleave_with(from_stdin_raw(), stop_on_first_empty=True)
         / to_stdout(line_separator=b"\r")
     )

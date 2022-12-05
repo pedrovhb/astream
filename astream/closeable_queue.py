@@ -1,252 +1,231 @@
 from __future__ import annotations
 
 import asyncio
-from asyncio import CancelledError
-from asyncio.queues import (
-    LifoQueue as AsyncioLifoQueue,
-    PriorityQueue as AsyncioPriorityQueue,
-    Queue as AsyncioQueue,
+import random
+from asyncio import (
+    Queue,
+    Future,
+    Event,
+    Task,
+    shield,
+    CancelledError,
+    PriorityQueue,
+    LifoQueue,
+    QueueEmpty,
 )
-from collections.abc import AsyncIterable
-from typing import Any, AsyncIterator, Coroutine, Iterable, TypeAlias, TypeVar
+from functools import cached_property
+from typing import *
 
-from .stream import Stream
-from .utils import ensure_async_iterator
+import math
 
-T = TypeVar("T")
-Coro: TypeAlias = Coroutine[Any, Any, T]
+from .event_like import Fuse
+
+_T = TypeVar("_T")
 
 
-class _CloseableQueueIterator(AsyncIterable[T]):
-    """An async iterator that yields items from a queue."""
-
-    def __init__(self, queue: CloseableQueue[T]) -> None:
-        self._queue = queue
-
-    def __aiter__(self) -> _CloseableQueueIterator[T]:
-        return self
-
-    async def __anext__(self) -> T:
-        try:
-            item = await self._queue.get()
-            self._queue.task_done()
-            return item
-        except CancelledError:
-            raise
-        except QueueExhausted:
-            self._queue.close()
-            raise StopAsyncIteration
-        except Exception as e:
-            self._queue.close()
-            raise e
+async def empty_gen() -> AsyncGenerator[_T, None]:
+    # noinspection PyUnreachableCode
+    if False:
+        yield  # type: ignore
 
 
 class QueueClosed(Exception):
-    ...
+    """Raised when trying to put items into a closed queue."""
 
 
-class QueueExhausted(Exception):
-    ...
+class QueueExhausted(QueueEmpty):
+    """Raised when trying to get items from a closed and empty queue.
 
-
-class CloseableQueue(AsyncioQueue[T], AsyncIterable[T]):
-    """A closeable version of the asyncio.Queue class.
-
-    This class is a closeable version of the asyncio.Queue class.
-
-    It adds the `close` method, which closes the queue. Once the queue is closed, attempts to put
-    items into it will raise `QueueClosed`. Items can still be removed until the closed queue is
-    empty, at which point it is considered exhausted. Attempts to get items from an exhausted
-    queue will raise `QueueExhausted`.
-
-    The `wait_closed` and `wait_exhausted` methods can be used to wait for the queue to be closed
-    or exhausted, respectively.
-
-    Calling `put` or `put_nowait` on a closed queue will raise `QueueClosed`, and calling `get`
-    or `get_nowait` on an exhausted queue will raise `QueueExhausted`.
+    An exhausted queue is a queue that is closed and empty, and thus will never
+    yield any more items.
     """
 
-    _putters: list[asyncio.Future[None]]
-    _getters: list[asyncio.Future[None]]
-    _finished: asyncio.Event
-
-    _queue: Iterable[T]
-
-    _close_getters: list[asyncio.Future[T]]
-    _iter_queues: list[CloseableQueue[T]]
-
+class CloseableQueue(Queue[_T]):
     def __init__(self, maxsize: int = 0) -> None:
-        super().__init__(maxsize)
-        self._closed = asyncio.Event()
-        self._exhausted = asyncio.Event()
+        super().__init__(maxsize=maxsize)
 
-        self._close_getters = []
-        self._iter_queues = []
+        self._cq_closed = Fuse()
+        self._cq_exhausted = Fuse()
+        self._cq_finished = Fuse()
 
-    async def put(self, item: T) -> None:
-        """Put an item into the queue.
+        self._finalize_task: Task[None] | None = None
+        self._aiter_done_futs: set[Future[None]] = set()
 
-        Raises:
-            QueueClosed: If the queue is closed.
-        """
-        if self.is_closed:
-            raise QueueClosed()
-        await super().put(item)
-        for iter_q in self._iter_queues:
-            iter_q.put_nowait(item)
+    def _put_closed(self, item: _T) -> NoReturn:
+        raise QueueClosed()
 
-    def put_nowait(self, item: T) -> None:
-        """Put an item into the queue without blocking.
+    def get_exhausted(self) -> NoReturn:
+        raise QueueExhausted()
 
-        Raises:
-            QueueFull: If the queue is full.
-            QueueClosed: If the queue is closed.
-        """
-        if self.is_closed:
-            raise QueueClosed()
-        super().put_nowait(item)
-        for iter_q in self._iter_queues:
-            iter_q.put_nowait(item)
+    def close(self):
+        """Close the queue, preventing any further items from being added."""
+        self._cq_closed.set()
 
-    async def get(self) -> T:
-        """Remove and return an item from the queue.
+        self.put = self.put_nowait = self._put_closed
 
-        Raises:
-            QueueExhausted: If the queue is closed and empty.
+        if self._finalize_task is None:
+            self._finalize_task = asyncio.create_task(self._finalize())
 
-        Returns:
-            The item from the queue.
-        """
+        # Cancelling the finalize task should not be possible, as it is
+        # responsible for setting the queue as finished. To prevent it
+        # from being cancelled by the user while still allowing close()
+        # to return an awaitable, we return a future which is set by the
+        # finalize task.
 
-        if self.is_exhausted:
-            raise QueueExhausted()
+        # fut = asyncio.get_event_loop().create_future()
+        # self._finalize_task.add_done_callback(
+        #     lambda _: fut.set_result(None) if not fut.done() else None
+        # )
+
+    async def _finalize(self) -> None:
+        """Finalize the queue, preventing any further items from being retrieved."""
+
+        # Wait for the queue to be empty, i.e. all items have been consumed
+        await self.join()
+        self._cq_exhausted.set()
+
+        # Prevent getting from the exhausted queue
+        self.get = self.get_nowait = self.get_exhausted
+
+        # Set done on all iterators, or directly set _finished if there are none
+        if self._aiter_done_futs:
+            for fut in self._aiter_done_futs:
+                fut.set_result(None)
+        else:
+            self._cq_finished.set()
+
+    async def _async_iterator(self) -> AsyncIterator[_T]:
+        queue_get_task: Task[_T] | None = None
+        done_fut = asyncio.get_event_loop().create_future()
+        self._aiter_done_futs.add(done_fut)
         try:
-            return await super().get()
-        except CancelledError:
-            if self.is_exhausted:
-                raise QueueExhausted()
-            raise
 
-    def get_nowait(self) -> T:
-        """Remove and return an item from the queue without blocking.
+            while True:
+                # Wait for either an item to be available, or for the done_fut
+                # Future to be set (indicating that the queue has been closed and
+                # exhausted).
+                queue_get_task = asyncio.create_task(self.get())
+                done, pending = await asyncio.wait(
+                    (done_fut, queue_get_task), return_when=asyncio.FIRST_COMPLETED
+                )
 
-        Raises:
-            QueueEmpty: If the queue is empty.
-            QueueExhausted: If the queue is closed and empty.
+                if queue_get_task in done:
+                    yield queue_get_task.result()
+                    self.task_done()
 
-        Returns:
-            The item from the queue.
-        """
-        if self.is_exhausted:
-            raise QueueExhausted()
+                if done_fut in done:
+                    return
 
-        return super().get_nowait()
+        finally:
 
-    def task_done(self) -> None:
-        super(CloseableQueue, self).task_done()
-        if self.is_closed and self._finished.is_set():
-            self._set_exhausted()
+            if queue_get_task is not None and not queue_get_task.done():
+                queue_get_task.cancel()
 
-    def close(self) -> None:
-        self._closed.set()
+            if not done_fut.done():
+                done_fut.set_result(None)
 
-        for putter in self._putters:
-            putter.set_exception(QueueClosed())
+            self._aiter_done_futs.remove(done_fut)
 
-        for iter_q in self._iter_queues:
-            iter_q.close()
+            # If exhausted and no more iterators, set the queue as finished.
+            # This is meant to be called by the last iterator alive, to signal
+            # that the queue is finished. If there are no iterators, the queue
+            # is set as finished in _finalize.
+            if self.is_exhausted and not self._aiter_done_futs:
+                self._cq_finished.set()
 
-        if self._finished.is_set():
-            self._set_exhausted()
+    async def wait_closed(self) -> None:
+        """Wait for the queue to be closed."""
+        await self._cq_closed.wait()
 
-    def _set_exhausted(self) -> None:
-        self._exhausted.set()
-        for getter in self._getters:
-            getter.cancel()
+    async def wait_exhausted(self) -> None:
+        """Wait for the queue to be exhausted."""
+        await self._cq_exhausted.wait()
+
+    async def wait_finished(self) -> None:
+        """Wait for the queue to be finished."""
+        await self._cq_finished.wait()
 
     @property
     def is_closed(self) -> bool:
-        return self._closed.is_set()
-
-    async def wait_closed(self) -> None:
-        await self._closed.wait()
+        """Return True if the queue is closed."""
+        return self._cq_closed.is_set()
 
     @property
     def is_exhausted(self) -> bool:
-        return self._exhausted.is_set()
+        """Return True if the queue is exhausted."""
+        return self._cq_exhausted.is_set()
 
-    async def wait_exhausted(self) -> None:
-        await self._exhausted.wait()
+    @property
+    def is_finished(self) -> bool:
+        """Return True if the queue is exhausted and all async gens have been stopped."""
+        return self._cq_finished.is_set()
 
-    def __aiter__(self) -> Stream[T]:
-        return Stream(self._aiter())
-
-    async def _aiter(self) -> AsyncIterator[T]:
-        while True:
-            try:
-                item = await self.get()
-                self.task_done()
-                yield item
-            except QueueExhausted:
-                break
-
-    async def feed_from(
-        self,
-        source: Iterable[T] | AsyncIterable[T],
-        close_when_done: bool = False,
-    ) -> None:
-        """Feed items from an async iterator into the queue.
-
-        This method will feed items from the given async iterator into the queue. It will
-        automatically close the queue when the source is exhausted.
-
-        Args:
-            source: The async iterator to feed items from.
-            close_when_done: If True, the queue will be closed when the source is exhausted.
-        """
-        async for item in ensure_async_iterator(source):
-            await self.put(item)
-
-        if close_when_done:
-            self.close()
-
-    def __lshift__(self, other: Iterable[T] | AsyncIterable[T]) -> None:
-        """Feed items from an iterator or async iterator into the queue.
-
-        Args:
-            other: The async iterator to feed items from.
-        """
-        asyncio.create_task(self.feed_from(other))
-
-    def __rrshift__(self, other: Iterable[T] | AsyncIterable[T]) -> None:
-        """Feed items from an iterator or async iterator into the queue.
-
-        Args:
-            other: The async iterator to feed items from.
-        """
-        asyncio.create_task(self.feed_from(other))
-
-    # def __repr__(self) -> str:
-    #     return (
-    #         f"{self.__class__.__name__}("
-    #         f"max={self.maxsize}, crt={self.qsize()}, getters={self._getters}, "
-    #         f"putters={self._putters}, closed={self.is_closed}, exhausted={self.is_exhausted}"
-    #         f")"
-    #     )
+    def __aiter__(self) -> AsyncIterator[_T]:
+        if self._cq_exhausted.is_set():
+            raise QueueExhausted()
+        return self._async_iterator()
 
 
-class CloseablePriorityQueue(AsyncioPriorityQueue[T], CloseableQueue[T]):
-    """A closeable version of PriorityQueue."""
+class CloseablePriorityQueue(CloseableQueue[_T], PriorityQueue[_T]):
+    pass
 
 
-class CloseableLifoQueue(AsyncioLifoQueue[T], CloseableQueue[T]):
-    """A closeable version of LifoQueue."""
+class CloseableLifoQueue(CloseableQueue[_T], LifoQueue[_T]):
+    pass
 
 
-__all__ = (
-    "CloseableQueue",
-    "CloseablePriorityQueue",
-    "CloseableLifoQueue",
-    "QueueClosed",
-    "QueueExhausted",
-)
+async def feed_queue(
+    queue: Queue[_T],
+    iterable: AsyncIterable[_T],
+    close_when_done: bool = False,
+) -> None:
+    if close_when_done and not isinstance(queue, CloseableQueue):
+        raise ValueError("close_when_done requires a CloseableQueue or one of its subclasses")
+
+    async for item in iterable:
+        print("putting", item)
+        await queue.put(item)
+
+    if close_when_done:
+        _queue = cast(CloseableQueue[_T], queue)
+        await _queue.close()
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    async def main():
+        q = CloseableQueue[int]()
+        q2 = CloseableLifoQueue[int]()
+
+        async def arange(n: int) -> AsyncIterable[int]:
+            for i in range(n):
+                yield i
+                await asyncio.sleep(0.1)
+
+        ts = [
+            asyncio.create_task(feed_queue(q, arange(10))),
+            asyncio.create_task(feed_queue(q2, q)),
+            asyncio.create_task(feed_queue(q, q2)),
+        ]
+        await asyncio.gather(*ts)
+
+        #
+        # async def print_queue():
+        #     async for item in q:
+        #         # break
+        #         print(item)
+        #
+        # async def add_to_queue():
+        #     for i in range(10):
+        #         await asyncio.sleep(0.1)
+        #         await q.put(i)
+        #     print("done adding")
+        #     q.close()
+        #
+        # await asyncio.gather(print_queue(), add_to_queue())
+        # await q.wait_finished()
+        # print("done")
+        # q.get_nowait()
+
+    asyncio.run(main(), debug=True)
