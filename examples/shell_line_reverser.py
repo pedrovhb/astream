@@ -2,8 +2,8 @@
 
 
 from astream.stream_utils import delay, to_stdout
-from sources import from_stdin_raw
 from astream.utils import run_stream
+from sources import from_stdin_raw
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import io
 import sys
 from functools import partial
 from pathlib import Path
-from typing import AsyncIterator, Literal, Iterator
+from typing import AsyncIterator, Iterator, Literal
 
 from loguru import logger
 

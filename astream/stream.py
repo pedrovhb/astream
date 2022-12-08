@@ -356,7 +356,29 @@ class Stream(AsyncIterator[_T]):
 
         # Stream / Callable -> Map(Callable) @ Stream -> Stream
         elif callable(transform):
-            t = Map(transform)
+            if getattr(transform, "_is_transformer_fn", False):
+                # Allow no-argument transformers to be used as a class.
+                #
+                # For instance:
+                #
+                #     @transformer
+                #     async def double(async_iter: AsyncIterator[float]) -> AsyncIterator[float]:
+                #         async for n in async_iter:
+                #             yield n * 2
+                #
+                #     ...
+                #
+                #     async for nn in arange(100) / double:
+                #         # This works
+                #         print(nn)
+
+                # todo make this typing-compatible (e.g. namedtuple) and if possible statically
+                #  infer whether this callable can be used like this (it can't if the wrapped
+                #  function has required args other than the async_iter)
+                t = transform()
+
+            else:
+                t = Map(transform)
 
         else:
             raise TypeError(f"Expected a Transformer or Callable, got {type(transform)}")
@@ -518,62 +540,36 @@ class FnTransformer(Transformer[_I, _O]):
             yield item
 
 
-class SinkTransformer(Transformer[_I, _O]):
-    def __init__(self, sink_fn: Callable[[AsyncIterator[_I]], Coroutine[Any, Any, _O]]) -> None:
-        self._sink = sink_fn
+class Sink(FnTransformer[_I, _O]):
+    ...
 
-    async def transform(self, src: AsyncIterable[_I]) -> AsyncIterator[_O]:
-        yield await self._sink(aiter(src))
+
+def sink(
+    _fn: Callable[Concatenate[AsyncIterator[_A], _P], Coroutine[object, object, _B]]
+) -> Callable[_P, Sink[_A, _B]]:
+    print(f"sink {_fn=}")
+
+    def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> Sink[_A, _B]:
+        async def _inner(src: AsyncIterator[_A]) -> AsyncIterator[_B]:
+            yield await _fn(src, *__args, **__kwargs)
+
+        return Sink(_inner)
+
+    setattr(_outer, "_is_transformer_fn", True)
+    return wraps(_fn)(_outer)
 
 
 def transformer(
     _fn: Callable[Concatenate[AsyncIterator[_A], _P], AsyncIterator[_B]]
 ) -> Callable[_P, FnTransformer[_A, _B]]:
-    # todo - make fns with no arguments other than the async iterable be usable without calling,
-    #  e.g. arange(10) / pairwise
-    #  probably by wrapping the function with a metaclass
-    @wraps(_fn)
     def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> FnTransformer[_A, _B]:
         def _inner(_src: AsyncIterator[_A]) -> AsyncIterator[_B]:
             return _fn(_src, *__args, **__kwargs)
 
         return FnTransformer(_inner)
 
-    return _outer
-
-
-@overload
-def sink(
-    _fn: Callable[Concatenate[AsyncIterator[_I], _P], Coroutine[Any, Any, _O]]
-) -> Callable[_P, Callable[[AsyncIterator[_I]], Coroutine[Any, Any, _O]]]:
-    ...
-
-
-@overload
-def sink(
-    _fn: Callable[Concatenate[AsyncIterator[_I], _P], _O]
-) -> Callable[_P, Callable[[AsyncIterator[_I]], Coroutine[Any, Any, _O]]]:
-    ...
-
-
-def sink(
-    _fn: Callable[Concatenate[AsyncIterator[_I], _P], _O]
-    | Callable[Concatenate[AsyncIterator[_I], _P], Coroutine[Any, Any, _O]]
-) -> Callable[_P, Callable[[AsyncIterator[_I]], Coroutine[Any, Any, _O]]]:
-
-    _async_fn = cast(CoroFn[Concatenate[AsyncIterator[_I], _P], _O], ensure_coroutine_function(_fn))
-
-    @wraps(_fn)
-    def _outer(
-        *__args: _P.args, **__kwargs: _P.kwargs
-    ) -> Callable[[AsyncIterator[_I]], Coroutine[Any, Any, _O]]:
-        async def _inner(_src: AsyncIterator[_I]) -> _O:
-            print("sink inner")
-            return await _async_fn(_src, *__args, **__kwargs)
-
-        return _inner
-
-    return _outer
+    setattr(_outer, "_is_transformer_fn", True)
+    return wraps(_fn)(_outer)
 
 
 @overload

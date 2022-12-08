@@ -3,15 +3,15 @@ from __future__ import annotations
 import asyncio
 import random
 from asyncio import (
-    Queue,
-    Future,
-    Event,
-    Task,
-    shield,
     CancelledError,
-    PriorityQueue,
+    Event,
+    Future,
     LifoQueue,
+    PriorityQueue,
+    Queue,
     QueueEmpty,
+    shield,
+    Task,
 )
 from functools import cached_property
 from typing import *
@@ -57,11 +57,11 @@ class CloseableQueue(Queue[_T]):
     def get_exhausted(self) -> NoReturn:
         raise QueueExhausted()
 
-    def close(self):
+    def close(self) -> None:
         """Close the queue, preventing any further items from being added."""
         self._cq_closed.set()
 
-        self.put = self.put_nowait = self._put_closed
+        # self.put = self.put_nowait = self._put_closed  todo readd
 
         if self._finalize_task is None:
             self._finalize_task = asyncio.create_task(self._finalize())
@@ -85,7 +85,7 @@ class CloseableQueue(Queue[_T]):
         self._cq_exhausted.set()
 
         # Prevent getting from the exhausted queue
-        self.get = self.get_nowait = self.get_exhausted
+        # self.get = self.get_nowait = self.get_exhausted  todo readd
 
         # Set done on all iterators, or directly set _finished if there are none
         if self._aiter_done_futs:
@@ -188,13 +188,13 @@ async def feed_queue(
 
     if close_when_done:
         _queue = cast(CloseableQueue[_T], queue)
-        await _queue.close()
+        _queue.close()
 
 
 if __name__ == "__main__":
     import asyncio
 
-    async def main():
+    async def main() -> None:
         q = CloseableQueue[int]()
         q2 = CloseableLifoQueue[int]()
 
