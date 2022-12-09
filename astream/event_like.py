@@ -120,6 +120,7 @@ class EventGeneratingCounter:
     its maximum or minimum value.
 
     """
+
     def __init__(
         self,
         initial_value: int = 0,

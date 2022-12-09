@@ -6,8 +6,8 @@ from collections import deque
 from functools import partial
 from typing import AsyncIterator, TypeVar
 
-from .stream import sink, Stream
-from .stream_utils import arange
+from astream.stream import sink, Stream
+from astream.stream_utils import arange
 
 _T = TypeVar("_T")
 

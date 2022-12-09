@@ -1,10 +1,12 @@
 from __future__ import annotations
+
 import asyncio
 import operator
+from pathlib import Path
+
+from astream.sources import from_file
 
 from astream.stream_utils import atee
-from astream.sources import from_file
-from pathlib import Path
 
 
 async def part_1() -> int:

@@ -1,10 +1,11 @@
 #! /usr/bin/env python
 import os
 
+from astream.sinks import to_stdout
+from astream.sources import from_stdin_raw
+
 from astream.stream_utils import delay, interleave_with, repeat_value
 from astream.utils import run_stream
-from astream.sources import from_stdin_raw
-from astream.sinks import to_stdout
 
 if __name__ == "__main__":
 

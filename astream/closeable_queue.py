@@ -1,13 +1,6 @@
 from __future__ import annotations
 
-from asyncio import (
-    Future,
-    LifoQueue,
-    PriorityQueue,
-    Queue,
-    QueueEmpty,
-    Task,
-)
+from asyncio import Future, LifoQueue, PriorityQueue, Queue, QueueEmpty, Task
 from typing import *
 
 from astream.event_like import Fuse

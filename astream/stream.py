@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from functools import wraps
 from types import NotImplementedType
 from typing import *
@@ -547,12 +546,12 @@ class _SinkFnWrapper(Generic[_P, _A, _B]):
         self._fn = _fn
 
     def __call__(self, *__args: _P.args, **__kwargs: _P.kwargs) -> Sink[_A, _B]:
-
         @wraps(self._fn)
         async def _inner(src: AsyncIterator[_A]) -> AsyncIterator[_B]:
             yield await self._fn(src, *__args, **__kwargs)
 
         return Sink(_inner)
+
 
 sink = _SinkFnWrapper
 
@@ -602,6 +601,8 @@ def stream(
         return Stream(__fn(*__args, **__kwargs))
 
     return _outer
+
+
 __all__ = (
     "Filter",
     "FlatMap",

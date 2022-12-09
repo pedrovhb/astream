@@ -6,8 +6,6 @@ import time
 from asyncio import Future
 from typing import *
 
-from .sentinel import _RaiseExceptionT, Sentinel
-
 _T = TypeVar("_T")
 _U = TypeVar("_U")
 _R = TypeVar("_R")

@@ -1,16 +1,6 @@
 from __future__ import annotations
 
-from astream import pure
-from astream import utils
-from astream import closeable_queue
-
-from astream import stream
-from astream import sources
-from astream import sinks
-
-from astream import stream_utils
-
-from astream import integrations
+from astream import closeable_queue, integrations, pure, sinks, sources, stream, stream_utils, utils
 
 
 __all__ = (

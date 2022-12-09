@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from itertools import chain, tee
-from typing import AsyncIterable, Counter, Iterable, Iterator, AsyncIterator, TypeVar
+from itertools import chain
+from typing import AsyncIterable, AsyncIterator, Counter, Iterable, Iterator, TypeVar
 
 import pytest
 from astream.stream import Stream, transformer
