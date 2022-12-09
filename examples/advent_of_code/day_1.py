@@ -41,4 +41,4 @@ async def part_2() -> int:
 
 
 if __name__ == "__main__":
-    asyncio.run(part_1(), debug=True)
+    asyncio.run(part_2(), debug=True)

@@ -85,3 +85,6 @@ if __name__ == "__main__":
         print(f"Read {len(read)}")
 
     asyncio.run(main())
+
+
+__all__ = ("from_zstd_file", "to_zstd_file")

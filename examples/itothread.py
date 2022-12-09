@@ -5,7 +5,7 @@ import random
 from datetime import datetime
 from typing import Iterator, TypeVar
 
-from astream import aenumerate, iter_to_aiter
+from astream
 
 
 def approximate_pi() -> Iterator[float]:

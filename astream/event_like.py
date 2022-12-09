@@ -185,3 +185,6 @@ class EventGeneratingCounter:
 
     inc = __iadd__
     dec = __isub__
+
+
+__all__ = ("EventGeneratingCounter", "Fuse", "SwitchEvent")

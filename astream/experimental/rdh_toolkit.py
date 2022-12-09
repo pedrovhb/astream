@@ -55,8 +55,16 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 """
-
-__all__ = ["Const", "Var", "FuncCall", "RegexEqual", "InSet", "Approximately"]
+__all__ = (
+    "Approximately",
+    "Const",
+    "FuncCall",
+    "InSet",
+    "RegexEqual",
+    "RegexEqualCase",
+    "RegexMatcher",
+    "Var",
+)
 
 
 import cmath

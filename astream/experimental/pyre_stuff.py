@@ -69,6 +69,7 @@ def ide_focus_line_url(file: Path, line: int | None = None, column: int | None =
 
 def ide_focus_line(file: Path, line: int | None = None, column: int | None = None):
     from urllib.error import HTTPError, URLError
+
     # URL request to open file in IDE, example:
     # "http://localhost:63342/api/file?file=/home/pedro/projs/astream/pyproject.toml&line=10&column=5"
 
@@ -107,22 +108,22 @@ class _TypeTree:
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         yield Segment(self.type_str)
 
-    @classmethod
-    def from_str(cls, type_str: str) -> _TypeTree:
-        match RegexMatcher(type_str):
-            case r"\((?P<signature>.*)\) -> (?P<return_type>.*)" as m:
-
-                params = tuple(_TypeTree.from_str(p) for p in m["signature"].split(", "))
-                print(m["signature"])
-                print(m["return_type"])
-                # print(params)
-                return SignatureTT(type_str, params, _TypeTree.from_str(m["return_type"]))
-            case r"(?P<param_name>.*?): (?P<param_type>.*)" as m:
-                return ParamTT(type_str, m["param_name"], m["param_type"])
-
-            case _:
-                print("no match")
-                return _TypeTree(type_str)
+    # @classmethod
+    # def from_str(cls, type_str: str) -> _TypeTree:
+    #     match RegexMatcher(type_str):
+    #         case r"\((?P<signature>.*)\) -> (?P<return_type>.*)" as m:
+    #
+    #             params = tuple(_TypeTree.from_str(p) for p in m["signature"].split(", "))
+    #             print(m["signature"])
+    #             print(m["return_type"])
+    #             # print(params)
+    #             return SignatureTT(type_str, params, _TypeTree.from_str(m["return_type"]))
+    #         case r"(?P<param_name>.*?): (?P<param_type>.*)" as m:
+    #             return ParamTT(type_str, m["param_name"], m["param_type"])
+    #
+    #         case _:
+    #             print("no match")
+    #             return _TypeTree(type_str)
 
 
 @dataclass(frozen=True)
@@ -537,3 +538,18 @@ async def main() -> None:
 if __name__ == "__main__":
 
     asyncio.run(main())
+
+
+__all__ = (
+    "con",
+    "ide_focus_line",
+    "ide_focus_line_url",
+    "live",
+    "main",
+    "ModPythonFilter",
+    "ParamTT",
+    "pyre_panel",
+    "PyreError",
+    "PyrePanel",
+    "SignatureTT",
+)

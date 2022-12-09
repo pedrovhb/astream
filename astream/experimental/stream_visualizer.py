@@ -19,3 +19,6 @@ class StreamNodeViz(Generic[_T], ConsoleRenderable):
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         yield Segment("Stream: ")
         yield Segment(self.stream.name)
+
+
+__all__ = ("StreamNodeViz",)

@@ -286,10 +286,6 @@ async def _consume(async_iterable: AsyncIterable[Any]) -> None:
         pass
 
 
-_StreamT = TypeVar("_StreamT", bound="Stream[Any]")
-_StreamTA: TypeAlias = Type["Stream[_T]"]
-
-
 class Stream(AsyncIterator[_T]):
     def __init__(self, src: AsyncIterable[_T] | Iterable[_T]) -> None:
         self._src: AsyncIterator[_T] = ensure_async_iterator(src)
@@ -544,19 +540,35 @@ class Sink(FnTransformer[_I, _O]):
     ...
 
 
-def sink(
-    _fn: Callable[Concatenate[AsyncIterator[_A], _P], Coroutine[object, object, _B]]
-) -> Callable[_P, Sink[_A, _B]]:
-    print(f"sink {_fn=}")
+class _SinkFnWrapper(Generic[_P, _A, _B]):
+    def __init__(
+        self, _fn: Callable[Concatenate[AsyncIterator[_A], _P], Coroutine[object, object, _B]]
+    ) -> None:
+        self._fn = _fn
 
-    def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> Sink[_A, _B]:
+    def __call__(self, *__args: _P.args, **__kwargs: _P.kwargs) -> Sink[_A, _B]:
+
+        @wraps(self._fn)
         async def _inner(src: AsyncIterator[_A]) -> AsyncIterator[_B]:
-            yield await _fn(src, *__args, **__kwargs)
+            yield await self._fn(src, *__args, **__kwargs)
 
         return Sink(_inner)
 
-    setattr(_outer, "_is_transformer_fn", True)
-    return wraps(_fn)(_outer)
+sink = _SinkFnWrapper
+
+# def sink(
+#     _fn: Callable[Concatenate[AsyncIterator[_A], _P], Coroutine[object, object, _B]]
+# ) -> Callable[_P, Sink[_A, _B]]:
+#     print(f"sink {_fn=}")
+#
+#     def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> Sink[_A, _B]:
+#         async def _inner(src: AsyncIterator[_A]) -> AsyncIterator[_B]:
+#             yield await _fn(src, *__args, **__kwargs)
+#
+#         return Sink(_inner)
+#
+#     setattr(_outer, "_is_transformer_fn", True)
+#     return wraps(_fn)(_outer)
 
 
 def transformer(
@@ -590,17 +602,16 @@ def stream(
         return Stream(__fn(*__args, **__kwargs))
 
     return _outer
-
-
-__all__ = [
+__all__ = (
+    "Filter",
+    "FlatMap",
+    "FnTransformer",
+    "Map",
+    "sink",
+    "Sink",
+    "stream",
     "Stream",
     "Transformer",
-    "Map",
-    "FlatMap",
-    "Filter",
-    "TransformerPipeline",
-    "FnTransformer",
     "transformer",
-    "stream",
-    "sink",
-]
+    "TransformerPipeline",
+)

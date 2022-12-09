@@ -27,3 +27,5 @@ async def aflatten(
         async for subitem in ensure_async_iterator(item):
             yield subitem
 
+
+__all__ = ("aflatten",)

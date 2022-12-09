@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 
-from . import day_1
-from . import day_2
+from examples.advent_of_code import day_1
+from examples.advent_of_code import day_2
 
 
 challenges = [[day_1.part_1, day_1.part_2], [day_2.part_1]]

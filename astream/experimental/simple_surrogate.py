@@ -417,3 +417,29 @@ asyncio.run(main())
 abc(6)
 y = abc(5)
 print(y)
+
+
+__all__ = (
+    "abc",
+    "async_fn",
+    "d",
+    "dd",
+    "f",
+    "it",
+    "main",
+    "n",
+    "P",
+    "P2",
+    "R",
+    "SimpleSurrogate",
+    "SorcerySurrogate",
+    "SurrogateOperation",
+    "sync_fn",
+    "T",
+    "T_co",
+    "T_contra",
+    "takes_sync_or_async",
+    "target",
+    "U",
+    "y",
+)
