@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "astream"
-version = "0.7.0"
+version = "0.7.1"
 description = ""
 authors = ["Pedro Batista <pedrovhb@gmail.com>"]
 
@@ -35,6 +35,7 @@ zstandard = "^0.19.0"
 [tool.poetry.group.dev.dependencies]
 pytest-asyncio = "^0.20.3"
 mypy = {path = "mypy-1.0.0+dev.695ea3017fee084c9d2ec17d9b28f8af905e3b63-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"}
+coverage = "^6.5.0"
 
 [tool.mypy]
 python_version = "3.10"
@@ -89,7 +90,7 @@ dependencies = [
     "phantom-types>=1.1.0",
 ]
 name = "astream"
-version = "0.7.0"
+version = "0.7.1"
 description = ""
 
 [project.urls]

@@ -13,8 +13,8 @@ from astream.utils import iter_to_aiter
 
 def from_stdin_raw(
     line_separator: bytes = b"\n",
-    strip_characters: tuple[bytes, ...] = (),
     keep_separator: bool = False,
+    strip: bool = True,
 ) -> Stream[bytes]:
     """Read lines from stdin.
 
@@ -26,11 +26,12 @@ def from_stdin_raw(
         hello
         world
     """
-    return (
-        Stream(iter_to_aiter(sys.stdin.buffer))
-        / bytes_stream_split_separator(separator=line_separator, keep_separator=keep_separator)
-        / partial(bytes.strip, strip_characters)
+    async_iter = Stream(iter_to_aiter(sys.stdin.buffer)).transform(
+        bytes_stream_split_separator(separator=line_separator, keep_separator=keep_separator)
     )
+    if strip:
+        return async_iter.transform(bytes.strip)
+    return async_iter
 
 
 def from_file_raw(

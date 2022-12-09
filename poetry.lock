@@ -658,7 +658,7 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "f3ae4ff2ff311812b9610379833865fccae1dfb2e6fa3c4e8a804f859e48cbfd"
+content-hash = "51e97fec6f41b8b6b9482ff52f5c9762584f697e729c0a887e2869245517604d"
 
 [metadata.files]
 astroid = [
