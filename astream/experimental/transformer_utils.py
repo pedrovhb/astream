@@ -13,8 +13,8 @@
 #     cast,
 # )
 #
-# from .utils import ensure_async_iterator, ensure_coroutine_function
-# from .sentinel import _NoValueT, Sentinel
+# from astream.utils import ensure_async_iterator, ensure_coroutine_function
+# from astream.sentinel import _NoValueT, Sentinel
 #
 # _T = TypeVar("_T")
 # _U = TypeVar("_U")

@@ -30,11 +30,11 @@ from typing import (
     TypeVar,
 )
 
-from .pure import aflatten as _pure_aflatten
+from astream.pure import aflatten as _pure_aflatten
 
-from .sentinel import _NoValueT, Sentinel
-from .stream import FnTransformer, Stream, stream, transformer, Transformer
-from .utils import create_future, ensure_async_iterator, ensure_coroutine_function
+from astream.sentinel import _NoValueT, Sentinel
+from astream.stream import FnTransformer, Stream, stream, transformer, Transformer
+from astream.utils import create_future, ensure_async_iterator, ensure_coroutine_function
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")

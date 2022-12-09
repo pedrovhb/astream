@@ -5,9 +5,9 @@ from functools import wraps
 from types import NotImplementedType
 from typing import *
 
-from .pure import aflatten
-from .sentinel import _NoValueT, Sentinel
-from .utils import ensure_async_iterator, ensure_coroutine_function
+from astream.pure import aflatten
+from astream.sentinel import _NoValueT, Sentinel
+from astream.utils import ensure_async_iterator, ensure_coroutine_function
 
 _T = TypeVar("_T")
 _T_co = TypeVar("_T_co", covariant=True)

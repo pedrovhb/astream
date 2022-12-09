@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from asyncio import TimerHandle
+from contextvars import Context
 from itertools import chain
-from typing import AsyncIterable, AsyncIterator, Counter, Iterable, Iterator, TypeVar
+from typing import AsyncIterable, AsyncIterator, Counter, Iterable, Iterator, TypeVar, Any, Callable
 
 import pytest
+import asyncio
+
+from hypothesis import given, strategies as st
+
 from astream.stream import Stream, transformer
 
 from astream.stream_utils import (
@@ -20,10 +26,45 @@ from astream.stream_utils import (
     azip,
     azip_longest,
 )
-from hypothesis import given, strategies as st
 
 
 _T = TypeVar("_T")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("time_scale",),
+    (
+        (1,),
+        (0.1,),
+        (0.01,),
+        (0.001,),
+        (1,),
+        (100,),
+        (1000,),
+    ),
+)
+async def test_time(time_scale: int) -> None:
+    """conftest.py sets the event loop to one that runs orders of magnitude faster.
+
+    This test ensures that the event loop isn't broken.
+    """
+
+    n = 0
+
+    async def f(i: int) -> None:
+        nonlocal n
+        await asyncio.sleep(i * time_scale)
+        if n != i - 1:
+            raise Exception("Event loop is broken")
+        n = i
+
+    coros = [f(i) for i in range(1, 40)]
+    import random
+
+    random.shuffle(coros)
+    await asyncio.gather(*coros)
+    assert n == 39
 
 
 @pytest.mark.asyncio

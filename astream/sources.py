@@ -6,9 +6,9 @@ from functools import partial
 from pathlib import Path
 from typing import Iterator
 
-from .stream import Stream
-from .stream_utils import bytes_stream_split_separator
-from .utils import iter_to_aiter
+from astream.stream import Stream
+from astream.stream_utils import bytes_stream_split_separator
+from astream.utils import iter_to_aiter
 
 
 def from_stdin_raw(

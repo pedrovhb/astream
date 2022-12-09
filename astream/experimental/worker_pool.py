@@ -17,7 +17,7 @@
 #     overload,
 # )
 #
-# from . import (
+# from astream. import (
 #     Stream,
 #     StreamFilterable,
 #     StreamFlatMappable,
@@ -28,7 +28,7 @@
 #     ensure_coroutine_function,
 # )
 #
-# from .closeable_queue import CloseableQueue
+# from astream.closeable_queue import CloseableQueue
 #
 # _T = TypeVar("_T")
 # _U = TypeVar("_U")
