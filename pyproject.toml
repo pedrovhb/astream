@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "astream"
-version = "0.7.1"
+version = "0.7.2"
 description = ""
 authors = ["Pedro Batista <pedrovhb@gmail.com>"]
 
@@ -90,7 +90,7 @@ dependencies = [
     "phantom-types>=1.1.0",
 ]
 name = "astream"
-version = "0.7.1"
+version = "0.7.2"
 description = ""
 
 [project.urls]

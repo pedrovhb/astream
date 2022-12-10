@@ -27,7 +27,7 @@ class Fuse:
         await self._fut
 
 
-class SwitchEvent(Event):
+class SwitchEvent:
     """A switch that can be turned on and off.
 
     This is similar to asyncio.Event, but can be turned on and off, and can be
@@ -75,44 +75,46 @@ class SwitchEvent(Event):
         """Return True if the switch is off."""
         return not self._state
 
-    async def wait(self) -> Literal[True]:
+    async def wait(self) -> None:
         """Wait for the switch to be turned on."""
-        return await self._ev_on.wait()
+        if not self._state:
+            await self._ev_on.wait()
 
-    async def wait_clear(self) -> Literal[True]:
+    async def wait_clear(self) -> None:
         """Wait for the switch to be turned off."""
-        return await self._ev_off.wait()
+        if self._state:
+            await self._ev_off.wait()
 
-    async def wait_for(self, state: bool) -> Literal[True]:
+    async def wait_for(self, state: bool) -> None:
         """Wait for the switch to be turned on or off.
 
         Args:
             state: The state to wait for.
         """
         if state:
-            return await self.wait()
+            await self.wait()
         else:
-            return await self.wait_clear()
+            await self.wait_clear()
 
-    async def wait_toggle(self) -> Literal[True]:
-        """Wait for the switch to be toggled."""
+    async def wait_toggle(self) -> None:
+        """Wait for the switch to be change states."""
         if self._state:
-            return await self.wait_clear()
+            await self.wait_clear()
         else:
-            return await self.wait()
+            await self.wait()
 
-    async def wait_toggle_to(self, state: bool) -> Literal[True]:
-        """Wait for the switch to be toggled to a specific state.
+    async def wait_toggle_to(self, state: bool) -> None:
+        """Wait for the switch to change from False to True, or True to False.
 
         Args:
             state: The state to wait for.
         """
         if state:
             await self.wait_clear()
-            return await self.wait()
+            await self.wait()
         else:
             await self.wait()
-            return await self.wait_clear()
+            await self.wait_clear()
 
 
 class EventGeneratingCounter:
