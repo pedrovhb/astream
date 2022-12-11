@@ -30,11 +30,11 @@ from typing import (
     TypeVar,
 )
 
-from .pure import aflatten as _pure_aflatten
+from astream.pure import aflatten as _pure_aflatten
 
-from .sentinel import _NoValueT, Sentinel
-from .stream import FnTransformer, Stream, stream, transformer, Transformer
-from .utils import create_future, ensure_async_iterator, ensure_coroutine_function
+from astream.sentinel import _NoValueT, Sentinel
+from astream.stream import FnTransformer, Stream, stream, transformer, Transformer
+from astream.utils import create_future, ensure_async_iterator, ensure_coroutine_function
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -331,7 +331,7 @@ async def ascan(
 
     Examples:
         >>> async def demo_ascan():
-        ...     async for it in ascan(lambda a, b: a + b, arange(5)):
+        ...     async for it in arange(5) / ascan(lambda a, b: a + b):
         ...         print(it)
         >>> asyncio.run(demo_ascan())
         0
@@ -451,7 +451,6 @@ async def bytes_stream_split_separator(
         The split bytes.
 
     Examples:
-        >>> from astream import Stream
         >>> async def demo_bytes_stream_split_separator():
         ...     s = Stream([b"hello", b"world", b"!"])
         ...     async for it in s / bytes_stream_split_separator(b"o"):
@@ -778,7 +777,7 @@ async def interleave_with(
 
     Examples:
         >>> async def demo_interleave_with() -> None:
-        ...     async for item in range(2) / interleave_with(range(2, 4)):
+        ...     async for item in arange(2) / interleave_with(range(2, 4)):
         ...         print(item)
         >>> asyncio.run(demo_interleave_with())
         0
@@ -887,9 +886,16 @@ async def top_k(
         ...     async for item in range(10) / top_k(3):
         ...         print(item)
         >>> asyncio.run(demo_top_k())
-        9
-        8
-        7
+        (0,)
+        (1, 0)
+        (2, 1, 0)
+        (3, 2, 1)
+        (4, 3, 2)
+        (5, 4, 3)
+        (6, 5, 4)
+        (7, 6, 5)
+        (8, 7, 6)
+        (9, 8, 7)
     """
     heap: list[tuple[_T | Any, int, _T]] = []
     insertion_counter = 0
@@ -929,7 +935,7 @@ async def partition_by_element(
         ...         print(item)
         >>> asyncio.run(demo_group_partitions())
         [0, 1, 2, 3, 4]
-        [5, 6, 7, 8, 9]
+        [6, 7, 8, 9]
     """
     partition: list[_T] = []
     async for item in async_iterator:
@@ -943,7 +949,6 @@ async def partition_by_element(
 
 
 aflatten = transformer(_pure_aflatten)
-
 __all__ = (
     "aconcatenate",
     "aenumerate",
@@ -962,6 +967,20 @@ __all__ = (
     "azip_longest",
     "bytes_stream_split_separator",
     "call_and_passthrough",
-    "top_k",
+    "delay",
+    "drop",
+    "identity",
+    "immediately_unique",
+    "interleave",
+    "interleave_with",
+    "interleave_with_values",
+    "nwise",
     "partition_by_element",
+    "repeat",
+    "repeat_value",
+    "SupportsGetItem",
+    "SupportsLessThan",
+    "take",
+    "top_k",
+    "unique",
 )

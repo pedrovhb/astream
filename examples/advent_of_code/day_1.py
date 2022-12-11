@@ -2,14 +2,15 @@ import asyncio
 from typing import *
 from pathlib import Path
 
-from astream.stream_utils import top_k, partition_by_element
 from astream.sources import from_file
+
+from astream.stream_utils import partition_by_element, top_k
 
 _T = TypeVar("_T")
 
 
 async def part_1() -> int:
-    file_path = Path(__file__).parent / "inputs/1_1"
+    file_path = Path(__file__).parent / "inputs/day_1_input"
     elf_carries = (
         from_file(file_path)
         / partition_by_element("")
@@ -22,7 +23,7 @@ async def part_1() -> int:
 
 
 async def part_2() -> int:
-    file_path = Path(__file__).parent / "inputs/1_1"
+    file_path = Path(__file__).parent / "inputs/day_1_input"
     elf_carries = (
         from_file(file_path)
         / partition_by_element("")
@@ -40,4 +41,4 @@ async def part_2() -> int:
 
 
 if __name__ == "__main__":
-    asyncio.run(part_1(), debug=True)
+    asyncio.run(part_2(), debug=True)

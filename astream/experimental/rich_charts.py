@@ -237,3 +237,15 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+__all__ = (
+    "CHARACTERS_BAR_HOR",
+    "CHARACTERS_BAR_VER",
+    "console",
+    "filled_area",
+    "FilledAreaChart",
+    "main",
+    "normalize_values",
+    "TimeValues",
+)

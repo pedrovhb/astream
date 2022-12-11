@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from datetime import timedelta
-from itertools import chain, tee
-from typing import AsyncIterable, Counter, Iterable, Iterator
+from asyncio import TimerHandle
+from contextvars import Context
+from itertools import chain
+from typing import AsyncIterable, AsyncIterator, Counter, Iterable, Iterator, TypeVar, Any, Callable
 
 import pytest
+import asyncio
+
+from hypothesis import given, strategies as st
+
 from astream.stream import Stream, transformer
 
 from astream.stream_utils import (
@@ -21,10 +26,45 @@ from astream.stream_utils import (
     azip,
     azip_longest,
 )
-from hypothesis import given, strategies as st
 
 
-# from astream.transformer_utils import areduce
+_T = TypeVar("_T")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("time_scale",),
+    (
+        (1,),
+        (0.1,),
+        (0.01,),
+        (0.001,),
+        (1,),
+        (100,),
+        (1000,),
+    ),
+)
+async def test_time(time_scale: int) -> None:
+    """conftest.py sets the event loop to one that runs orders of magnitude faster.
+
+    This test ensures that the event loop isn't broken.
+    """
+
+    n = 0
+
+    async def f(i: int) -> None:
+        nonlocal n
+        await asyncio.sleep(i * time_scale)
+        if n != i - 1:
+            raise Exception("Event loop is broken")
+        n = i
+
+    coros = [f(i) for i in range(1, 40)]
+    import random
+
+    random.shuffle(coros)
+    await asyncio.gather(*coros)
+    assert n == 39
 
 
 @pytest.mark.asyncio
@@ -225,18 +265,18 @@ async def test_arange_delayed() -> None:
 @pytest.mark.asyncio
 async def test_azip_longest() -> None:
     def expected() -> Iterator[tuple[int, int, int]]:
-        yield 10, 10, 15
-        yield 11, 11, 16
-        yield 12, 12, 17
-        yield 13, 13, 18
-        yield 14, 14, 19
-        yield -1, -1, 20
-        yield -1, -1, 21
+        yield 10, 1337, 15
+        yield 11, 1338, 16
+        yield 12, 1339, 17
+        yield 13, 1340, 18
+        yield 14, 1341, 19
+        yield -1, 1342, 20
+        yield -1, 1343, 21
         yield -1, -1, 22
         yield -1, -1, 23
         yield -1, -1, 24
 
-    (a, b), c = atee(arange(10, 15), 2), arange(15, 25)
+    a, b, c = arange(10, 15), arange(1337, 1344), arange(15, 25)
     exp = expected()
     async for tup in azip_longest(a, b, c, fillvalue=-1):
         assert tup == next(exp)
@@ -272,6 +312,30 @@ async def test_arepeat() -> None:
     exp = expected()
     async for tup in arepeat(arange(10, 15), 4):
         assert tup == next(exp)
+
+    with pytest.raises(StopIteration):
+        next(exp)
+
+
+@pytest.mark.asyncio
+async def test_no_args_transformer() -> None:
+    @transformer
+    async def take_every_2(async_iterator: AsyncIterator[_T]) -> AsyncIterator[_T]:
+        y = False
+        async for it in async_iterator:
+            if y:
+                y = False
+                continue
+            y = True
+            yield it
+
+    def expected() -> Iterator[int]:
+        yield from range(0, 20, 2)
+
+    exp = expected()
+    async for tup in arange(20) / take_every_2:
+        print(tup, e := next(exp))
+        assert tup == e
 
     with pytest.raises(StopIteration):
         next(exp)

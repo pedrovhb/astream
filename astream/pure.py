@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import AsyncIterable, AsyncIterator, Iterable, overload, TypeVar
 
-from .utils import ensure_async_iterator
+from astream.utils import ensure_async_iterator
 
 _T = TypeVar("_T")
 
@@ -27,3 +27,5 @@ async def aflatten(
         async for subitem in ensure_async_iterator(item):
             yield subitem
 
+
+__all__ = ("aflatten",)

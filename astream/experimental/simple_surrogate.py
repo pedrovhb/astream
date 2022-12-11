@@ -230,8 +230,6 @@ async def main() -> None:
 from sorcery import spell
 
 
-
-
 class SorcerySurrogate:
     def __init__(self, expr="") -> None:
         self._expr = expr
@@ -292,6 +290,7 @@ class SorcerySurrogate:
             return super().__getattribute__(item)
 
         return SorcerySurrogate(expr=self._get_expr(frame_info))
+
     @spell  # type: ignore
     def __setattr__(self, frame_info: FrameInfo, item: str, value: Any) -> Any:
         # print("setattr", item, value)
@@ -385,7 +384,6 @@ class SorcerySurrogate:
     # __str__ = lambda *args, **kwargs: "1"
 
 
-
 it = SorcerySurrogate()
 f = 1 + 2
 abc = 1 + it + 1 * 4
@@ -399,7 +397,8 @@ print(f"val is {dd(target)}")
 
 from astream import apredicate_map, arange, stream
 
-d = ({"abc": [0, SimpleNamespace(some=3, something=i, other={"cde": i ** 7})]} for i in range(20))
+d = ({"abc": [0, SimpleNamespace(some=3, something=i, other={"cde": i**7})]} for i in range(20))
+
 
 async def main() -> None:
     async for x in stream(d) / apredicate_map(
@@ -417,3 +416,29 @@ asyncio.run(main())
 abc(6)
 y = abc(5)
 print(y)
+
+
+__all__ = (
+    "abc",
+    "async_fn",
+    "d",
+    "dd",
+    "f",
+    "it",
+    "main",
+    "n",
+    "P",
+    "P2",
+    "R",
+    "SimpleSurrogate",
+    "SorcerySurrogate",
+    "SurrogateOperation",
+    "sync_fn",
+    "T",
+    "T_co",
+    "T_contra",
+    "takes_sync_or_async",
+    "target",
+    "U",
+    "y",
+)
