@@ -61,7 +61,7 @@ class CloseableQueue(Queue[_T]):
         self._cq_exhausted = loop.create_future()
         self._cq_finished = loop.create_future()
 
-        self._aiter_done_futs: set[Future[None]] = set()
+        self._running_async_gens: set[AsyncGenerator[_T, None]] = set()
 
     async def get(self) -> _T:
         if self._cq_exhausted.done():
@@ -105,7 +105,7 @@ class CloseableQueue(Queue[_T]):
 
     def task_done(self) -> None:
         super().task_done()
-        if self.empty() and self.is_closed and not self._aiter_done_futs:
+        if self.empty() and self.is_closed and not self._running_async_gens:
             self._cq_exhausted.set_result(None)
 
     def close(self) -> None:
@@ -114,15 +114,15 @@ class CloseableQueue(Queue[_T]):
 
         if self.empty():
             self._cq_exhausted.set_result(None)
-        for fut in self._aiter_done_futs:
-            fut.set_exception(QueueExhausted())
-        if not self._aiter_done_futs:
+        for gen in self._running_async_gens:
+            gen.aclose()
+        if not self._running_async_gens:
             self._cq_finished.set_result(None)
 
-    async def _async_iterator(self) -> AsyncIterator[_T]:
+    async def _async_gen(self) -> AsyncGenerator[_T]:
         queue_get_task: Task[_T] | None = None
         done_fut = asyncio.get_event_loop().create_future()
-        self._aiter_done_futs.add(done_fut)
+        # self._aiter_done_futs.add(done_fut)
         try:
 
             while True:
@@ -146,18 +146,21 @@ class CloseableQueue(Queue[_T]):
                     self._cq_exhausted.set_result(None)
                     return
 
+        except QueueExhausted:
+            return
+
         finally:
 
             if queue_get_task is not None and not queue_get_task.done():
                 queue_get_task.cancel()
 
-            self._aiter_done_futs.remove(done_fut)
+            # self._aiter_done_futs.remove(done_fut)
 
             # If exhausted and no more iterators, set the queue as finished.
-            # This is meant to be called by the last iterator alive, to signal
-            # that the queue is finished. If there are no iterators, the queue
+            # This is meant to be called by the last generator alive, to signal
+            # that the queue is finished. If there are no generators, the queue
             # is set as finished in _finalize.
-            if self._cq_exhausted.done() and not self._aiter_done_futs:
+            if self._cq_exhausted.done() and not self._running_async_gens:
                 self._cq_finished.done()
 
     async def wait_closed(self) -> None:
@@ -190,7 +193,9 @@ class CloseableQueue(Queue[_T]):
     def __aiter__(self) -> AsyncIterator[_T]:
         if self._cq_exhausted.done():
             raise QueueExhausted()
-        return self._async_iterator()
+        gen = self._async_gen()
+        self._running_async_gens.add(gen)
+        return gen
 
 
 class CloseablePriorityQueue(CloseableQueue[_T], PriorityQueue[_T]):
