@@ -620,6 +620,25 @@ async def take(async_iterator: AsyncIterator[_T], n: int) -> AsyncIterator[_T]:
 
 
 @transformer
+async def take_while(
+    async_iterator: AsyncIterator[_T],
+    predicate: Callable[[_T], Coroutine[Any, Any, bool]] | Callable[[_T], bool],
+) -> AsyncIterator[_T]:
+    """Take the first `n` items from the stream.
+
+    Examples: # todo
+    """
+    _predicate = cast(
+        Callable[[_T], Coroutine[Any, Any, bool]], ensure_coroutine_function(predicate)
+    )
+    async for item in async_iterator:
+        if await _predicate(item):
+            yield item
+        else:
+            break
+
+
+@transformer
 async def drop(async_iterator: AsyncIterator[_T], n: int) -> AsyncIterator[_T]:
     """Drop the first `n` items from the stream.
 
@@ -709,8 +728,11 @@ async def unique(
             seen.add(new_key)
 
 
+_AsyncIteratorT = TypeVar("_AsyncIteratorT", bound=AsyncIterator[Any])
+
+
 @transformer
-async def delay(async_iterator: AsyncIterator[_T], delay: float) -> AsyncIterator[_T]:
+async def delay(async_iterator: AsyncIterator[_U], delay: float) -> AsyncIterator[_U]:
     """Delay each item in the stream by `delay` seconds.
 
     Args:
@@ -718,7 +740,7 @@ async def delay(async_iterator: AsyncIterator[_T], delay: float) -> AsyncIterato
 
     Examples:
         >>> async def demo_delay() -> None:
-        ...     async for item in range(3) / delay(0.5):
+        ...     async for item in arange(3) / delay(0.5):
         ...         print(item)
         >>> asyncio.run(demo_delay())
         0

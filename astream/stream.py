@@ -8,6 +8,9 @@ from typing import *
 from astream.pure import aflatten
 from astream.sentinel import _NoValueT, Sentinel
 from astream.utils import ensure_async_iterator, ensure_coroutine_function
+from closeable_queue import CloseableQueue
+
+# from worker_q import WorkerQueue
 
 _T = TypeVar("_T")
 _T_co = TypeVar("_T_co", covariant=True)
@@ -33,7 +36,7 @@ _P = ParamSpec("_P")
 CoroFn: TypeAlias = Callable[_P, Coroutine[object, object, _T_co]]
 SyncFn: TypeAlias = Callable[_P, _T_co]
 EitherFn: TypeAlias = Union[CoroFn[_P, _T_co], SyncFn[_P, _T_co]]
-EitherIterable: TypeAlias = Union[Iterable[_T_co], AsyncIterable[_T_co]]
+EitherIterable: TypeAlias = Union[Iterator[_T_co], AsyncIterator[_T_co]]
 
 # Out of ideas ¯\_(ツ)_/¯
 # Typing with just Iterable and AsyncIterable is not enough, mypy says
@@ -76,7 +79,7 @@ def _identity(x: _T) -> _T:
 
 
 class Transformer(Generic[_I, _O]):
-    def transform(self, src: AsyncIterable[_I]) -> AsyncIterator[_O]:
+    def transform(self, src: AsyncIterator[_I]) -> AsyncIterator[_O]:
         raise NotImplementedError
 
     ####################################################################
@@ -243,6 +246,34 @@ class Transformer(Generic[_I, _O]):
             return TransformerPipeline(Filter(other), self)
 
         return NotImplemented
+
+    ####################################################################
+    # __mul__ (a.k.a. `**`) overloads
+    def __pow__(self, n_workers: int) -> FnTransformer[_I, _O]:
+        active_workers = n_workers
+
+        out_queue: CloseableQueue[_O] = CloseableQueue()
+        in_queue: CloseableQueue[_I] = CloseableQueue()
+
+        async def worker() -> None:
+            nonlocal active_workers
+            async for item in self.transform(aiter(in_queue)):
+                await out_queue.put(item)
+            active_workers -= 1
+            if active_workers == 0:
+                out_queue.close()
+
+        def _run(src: AsyncIterator[_I]) -> Stream[_O]:
+            async def _inner() -> None:
+                async for item in src:
+                    await in_queue.put(item)
+                in_queue.close()
+
+            task_workers = [asyncio.create_task(worker()) for _ in range(n_workers)]
+            task = asyncio.create_task(_inner())
+            return Stream(out_queue)
+
+        return FnTransformer(_run)
 
     ####################################################################
     # __rrshift__ (a.k.a. `O >> T`) and __lshift__ (a.k.a. T << O) overloads
@@ -443,6 +474,9 @@ class Stream(AsyncIterator[_T]):
 
 
 class Map(Transformer[_I, _O]):
+
+    __slots__ = ("_fn",)
+
     @overload
     def __init__(self, fn: CoroFn[[_I], _O]) -> None:
         ...
@@ -454,12 +488,15 @@ class Map(Transformer[_I, _O]):
     def __init__(self, fn: CoroFn[[_I], _O] | SyncFn[[_I], _O]) -> None:
         self._fn = cast(Callable[[_I], Coroutine[Any, Any, _O]], ensure_coroutine_function(fn))
 
-    async def transform(self, src: AsyncIterable[_I]) -> AsyncIterator[_O]:
+    async def transform(self, src: AsyncIterator[_I]) -> AsyncIterator[_O]:
         async for item in src:
             yield await self._fn(item)
 
 
 class FlatMap(Transformer[_I, _O]):
+
+    __slots__ = ("_fn",)
+
     @overload
     def __init__(self, fn: CoroFn[[_I], Iterable[_O]]) -> None:
         ...
@@ -488,13 +525,16 @@ class FlatMap(Transformer[_I, _O]):
             ensure_coroutine_function(fn),
         )
 
-    async def transform(self, src: AsyncIterable[_I]) -> AsyncIterator[_O]:
+    async def transform(self, src: AsyncIterator[_I]) -> AsyncIterator[_O]:
         async for item in src:
             async for sub_item in ensure_async_iterator(await self._fn(item)):
                 yield sub_item
 
 
 class Filter(Transformer[_T, _T]):
+
+    __slots__ = ("_fn",)
+
     @overload
     def __init__(self, fn: CoroFn[[_T], bool]) -> None:
         ...
@@ -506,18 +546,21 @@ class Filter(Transformer[_T, _T]):
     def __init__(self, fn: CoroFn[[_T], bool] | SyncFn[[_T], bool]) -> None:
         self._fn = ensure_coroutine_function(fn)
 
-    async def transform(self, src: AsyncIterable[_T]) -> AsyncIterator[_T]:
+    async def transform(self, src: AsyncIterator[_T]) -> AsyncIterator[_T]:
         async for item in src:
             if await self._fn(item):
                 yield item
 
 
 class TransformerPipeline(Transformer[_I, _O]):
+
+    __slots__ = ("t_a", "t_b")
+
     def __init__(self, t_a: Transformer[_I, _U], t_b: Transformer[_U, _O]) -> None:
         self._t_a = t_a
         self._t_b = t_b
 
-    async def transform(self, src: AsyncIterable[_I]) -> AsyncIterator[_O]:
+    async def transform(self, src: AsyncIterator[_I]) -> AsyncIterator[_O]:
         t1 = self._t_a.transform(src)
         t2 = self._t_b.transform(t1)
         async for item in t2:
@@ -525,10 +568,13 @@ class TransformerPipeline(Transformer[_I, _O]):
 
 
 class FnTransformer(Transformer[_I, _O]):
+
+    __slots__ = ("_fn",)
+
     def __init__(self, fn: Callable[[AsyncIterator[_I]], AsyncIterator[_O]]) -> None:
         self._fn = fn
 
-    async def transform(self, src: EitherIterable[_I]) -> AsyncIterator[_O]:
+    async def transform(self, src: AsyncIterator[_I]) -> AsyncIterator[_O]:
         # todo - accept EitherIterable for any transform?
         _async_iterator_src = ensure_async_iterator(src)
         async for item in self._fn(_async_iterator_src):
@@ -540,6 +586,9 @@ class Sink(FnTransformer[_I, _O]):
 
 
 class _SinkFnWrapper(Generic[_P, _A, _B]):
+
+    __slots__ = ("_fn",)
+
     def __init__(
         self, _fn: Callable[Concatenate[AsyncIterator[_A], _P], Coroutine[object, object, _B]]
     ) -> None:
@@ -554,20 +603,6 @@ class _SinkFnWrapper(Generic[_P, _A, _B]):
 
 
 sink = _SinkFnWrapper
-
-# def sink(
-#     _fn: Callable[Concatenate[AsyncIterator[_A], _P], Coroutine[object, object, _B]]
-# ) -> Callable[_P, Sink[_A, _B]]:
-#     print(f"sink {_fn=}")
-#
-#     def _outer(*__args: _P.args, **__kwargs: _P.kwargs) -> Sink[_A, _B]:
-#         async def _inner(src: AsyncIterator[_A]) -> AsyncIterator[_B]:
-#             yield await _fn(src, *__args, **__kwargs)
-#
-#         return Sink(_inner)
-#
-#     setattr(_outer, "_is_transformer_fn", True)
-#     return wraps(_fn)(_outer)
 
 
 def transformer(

@@ -119,9 +119,9 @@ class CloseableQueue(Queue[_T]):
         if not self._running_async_gens:
             self._cq_finished.set_result(None)
 
-    async def _async_gen(self) -> AsyncGenerator[_T]:
+    async def _async_gen(self) -> AsyncGenerator[_T, None]:
         queue_get_task: Task[_T] | None = None
-        done_fut = asyncio.get_event_loop().create_future()
+        # done_fut = asyncio.get_event_loop().create_future()
         # self._aiter_done_futs.add(done_fut)
         try:
 
@@ -237,6 +237,13 @@ async def feed_queue(
     if close_when_done:
         _queue = cast(CloseableQueue[_T], queue)
         _queue.close()
+
+
+_R = TypeVar("_R")
+
+
+class Oven(Generic[_T, _R], CloseableQueue[_T]):
+    """An async closeable queue that returns a future upon putting"""
 
 
 if __name__ == "__main__":

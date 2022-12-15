@@ -1,9 +1,17 @@
 import asyncio
 from asyncio import Future
-from typing import Callable, AsyncIterator, TypeVar, AsyncIterable
+from typing import (
+    Callable,
+    AsyncIterator,
+    TypeVar,
+    AsyncIterable,
+    AsyncGenerator,
+    Protocol,
+    Generic,
+)
 
 from astream.closeable_queue import CloseableQueue
-from astream.stream import Transformer, Stream
+from astream.stream import Transformer, Stream, FnTransformer
 from astream.stream_utils import arange_delayed, delay, arange
 
 _I = TypeVar("_I")
@@ -53,7 +61,7 @@ class WorkerQueue(Transformer[_I, _O]):
 
     async def _worker(self) -> None:
         worker_q: CloseableQueue[_I] = CloseableQueue(maxsize=1)
-        transformer = Stream(aiter(worker_q)).transform(self._transformer_fn)
+        transformer: Stream[_O] = Stream(aiter(worker_q)).transform(self._transformer_fn)
         async for item, fut in self._in_q:
             await worker_q.put(item)
             fut.set_result(await anext(transformer))
@@ -67,10 +75,46 @@ class WorkerQueue(Transformer[_I, _O]):
         return self._output_gatherer()
 
 
+class MultiWorker(Generic[_I, _O]):
+    def __init__(self, n_workers: int = 5) -> None:
+        self._n_workers = n_workers
+
+    def __rpow__(self, other: Transformer[_I, _O]) -> Transformer[_I, _O]:
+        active_workers = self._n_workers
+
+        out_queue: CloseableQueue[_O] = CloseableQueue()
+        in_queue: CloseableQueue[_I] = CloseableQueue()
+
+        async def worker() -> None:
+            nonlocal active_workers
+            async for item in other.transform(aiter(in_queue)):
+                await out_queue.put(item)
+            active_workers -= 1
+            if active_workers == 0:
+                out_queue.close()
+
+        def _run() -> Stream[_O]:
+            async def _inner(src: AsyncIterator[_I]) -> None:
+                async for item in src:
+                    await in_queue.put(item)
+                in_queue.close()
+
+            task_workers = [asyncio.create_task(worker()) for _ in range(self._n_workers)]
+            return FnTransformer(_inner)
+
+        return FnTransformer(_run)
+
+
 if __name__ == "__main__":
 
+    import asyncio
+
     async def main() -> None:
-        async for item in arange(20) / WorkerQueue(delay(1)):
-            print(item)
+        # reveal_type(t)
+        async for chunk in (arange(10) / (delay(1) ** MultiWorker(4))):
+            print(chunk)
+
+        # async for item in arange(20) / WorkerQueue(delay(1)):
+        #     print(item)
 
     asyncio.run(main(), debug=True)

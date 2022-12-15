@@ -293,9 +293,9 @@ click = "*"
 
 [[package]]
 name = "mypy"
-version = "1.0.0+dev.695ea3017fee084c9d2ec17d9b28f8af905e3b63"
+version = "1.0.0+dev.b0003aff931c12298fb462aa4cece18610ee4d05"
 description = "Optional static typing for Python"
-category = "dev"
+category = "main"
 optional = false
 python-versions = ">=3.7"
 
@@ -311,14 +311,14 @@ python2 = ["typed-ast (>=1.4.0,<2)"]
 reports = ["lxml"]
 
 [package.source]
-type = "file"
-url = "mypy-1.0.0+dev.695ea3017fee084c9d2ec17d9b28f8af905e3b63-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+type = "url"
+url = "https://github.com/mypyc/mypy_mypyc-wheels/releases/download/v1.0.0%2Bdev.b0003aff931c12298fb462aa4cece18610ee4d05/mypy-1.0.0+dev.b0003aff931c12298fb462aa4cece18610ee4d05-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
 
 [[package]]
 name = "mypy-extensions"
 version = "0.4.3"
 description = "Experimental type system extensions for programs checked with the mypy typechecker."
-category = "dev"
+category = "main"
 optional = false
 python-versions = "*"
 
@@ -545,7 +545,7 @@ python-versions = ">=2.6, !=3.0.*, !=3.1.*, !=3.2.*"
 name = "tomli"
 version = "2.0.1"
 description = "A lil' TOML parser"
-category = "dev"
+category = "main"
 optional = false
 python-versions = ">=3.7"
 
@@ -658,7 +658,7 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "51e97fec6f41b8b6b9482ff52f5c9762584f697e729c0a887e2869245517604d"
+content-hash = "472e9b98f5f80a21456fa61c3813c4426e5f8fa7729ecfe93c073bdd96d90986"
 
 [metadata.files]
 astroid = [
@@ -931,9 +931,7 @@ moreorless = [
     {file = "moreorless-0.4.0-py2.py3-none-any.whl", hash = "sha256:17f1fbef60fd21c84ee085a929fe3acefcaddca30df5dd09c024e9939a9e6a00"},
     {file = "moreorless-0.4.0.tar.gz", hash = "sha256:85e19972c1a0b3a49f8543914f57bd83f6e1b10df144d5b97b8c5e9744d9c08c"},
 ]
-mypy = [
-    {file = "mypy-1.0.0+dev.695ea3017fee084c9d2ec17d9b28f8af905e3b63-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1edee915271abf5f1825ff44c97700ca7d0d5bdf6610ee3c3463d987b5c95550"},
-]
+mypy = []
 mypy-extensions = [
     {file = "mypy_extensions-0.4.3-py2.py3-none-any.whl", hash = "sha256:090fedd75945a69ae91ce1303b5824f428daf5a028d2f6ab8a299250a846f15d"},
     {file = "mypy_extensions-0.4.3.tar.gz", hash = "sha256:2d82818f5bb3e369420cb3c4060a7970edba416647068eb4c5343488a6c604a8"},

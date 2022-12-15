@@ -9,51 +9,53 @@ import math
 import operator
 import random
 import time
+import typing
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from functools import reduce, partialmethod
+from itertools import islice
 from typing import Sequence, Type, TypeVar, NamedTuple, Iterator, Callable, Literal, Final
 
 BRAILLE_RANGE_START = 0x2800
 
-tup_to_braille_offset = {
-    (0, 3): 1 << 0,
-    (0, 2): 1 << 1,
-    (0, 1): 1 << 2,
-    (0, 0): 1 << 6,
-    (1, 3): 1 << 3,
-    (1, 2): 1 << 4,
-    (1, 1): 1 << 5,
-    (1, 0): 1 << 7,
+coords_braille_mapping = {
+    (0, 3): 1 << 0,  # ⠁
+    (0, 2): 1 << 1,  # ⠂
+    (0, 1): 1 << 2,  # ⠄
+    (0, 0): 1 << 6,  # ⡀
+    (1, 3): 1 << 3,  # ⠈
+    (1, 2): 1 << 4,  # ⠐
+    (1, 1): 1 << 5,  # ⠠
+    (1, 0): 1 << 7,  # ⢀
+    (0, -1): 0,
+    (1, -1): 0,
+}
+coords_braille_mapping_filled = {
+    (0, 3): 1 << 0 | 1 << 1 | 1 << 2 | 1 << 6,  # ⡇
+    (0, 2): 1 << 1 | 1 << 2 | 1 << 6,  # ⡆
+    (0, 1): 1 << 2 | 1 << 6,  # ⡄
+    (0, 0): 1 << 6,  # ⡀
+    (1, 3): 1 << 3 | 1 << 4 | 1 << 5 | 1 << 7,  # ⢸
+    (1, 2): 1 << 4 | 1 << 5 | 1 << 7,  # ⢰
+    (1, 1): 1 << 5 | 1 << 7,  # ⢠
+    (1, 0): 1 << 7,  # ⢀
+    (0, -1): 0,
+    (1, -1): 0,
 }
 
 
-def coords_to_unicode(*braille: tuple[int, int]) -> str:
-    """Converts one or more tuples of (x, y) values in the range (0, 0) - (1, 3) (inclusive) to a
-    unicode braille character composed by the dots at those coordinates.
+def coords_to_braille(*coords: tuple[int, int]) -> str:
+    return chr(reduce(operator.or_, [coords_braille_mapping[tup] for tup in coords], 0x2800))
 
-    Args:
-        braille: A tuple of (row, column) pairs representing a four row braille character.
 
-    Returns:
-        A unicode braille character.
-
-    Examples:
-        >>> coords_to_unicode((0, 0), (0, 1), (0, 2), (0, 3))
-        ... '⠁'
-        >>> coords_to_unicode((1, 0), (1, 1), (1, 2), (1, 3))
-        ... '⠉'
-        >>> coords_to_unicode((0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1), (1, 2), (1, 3))
-        ... '⠛'
-    """
-    # return chr(sum(four_row_braille_dict[braille_char] for braille_char in braille) + 0x2800)
-    return chr(reduce(operator.or_, [tup_to_braille_offset[tup] for tup in braille], 0x2800))
+print(coords_to_braille((0, 0), (1, 0)))  # ⠁
+print(coords_to_braille((0, 0), (1, 0), (1, 3), (1, 2)))
 
 
 y = (0, 1, 2, 3, 2, 2, 0, 1, 2, 3, 3, 2, 1, 0)
 
 for l, r in zip(y[::2], y[1::2]):
-    print(coords_to_unicode((0, l), (1, r)), end="")
+    print(coords_to_braille((0, l), (1, r)), end="")
 
 
 def sequence_to_braille(sequence: Sequence[int]) -> str:
@@ -71,7 +73,7 @@ def sequence_to_braille(sequence: Sequence[int]) -> str:
         >>> sequence_to_braille("123")
         ... '⠼⠁⠃⠉'
     """
-    return "".join(coords_to_unicode((0, l), (1, r)) for l, r in zip(sequence[::2], sequence[1::2]))
+    return "".join(coords_to_braille((0, l), (1, r)) for l, r in zip(sequence[::2], sequence[1::2]))
 
 
 def bouncing_ball() -> None:
@@ -102,15 +104,13 @@ def bouncing_ball() -> None:
             pos_y = 0
             speed_y *= -1
 
-        div, mod = divmod(pos_x, 1)  # % 80
+        div, mod = divmod(pos_x, 1)
         leading_spaces = " " * (int(div) + hor_start)
         braille_x = 0 if mod < 0.5 else 1
         braille_y = pos_y // 1
-        # print(mod, braille_x, braille_y)
 
-        s = leading_spaces + coords_to_unicode((braille_x, braille_y))
+        s = leading_spaces + coords_to_braille((braille_x, braille_y))
 
-        # print("\r" + " " * (hor_end + hor_start + 1), end="\r", flush=False)
         print(s, end="\r", flush=True)
         time.sleep(0.01)
 
@@ -148,7 +148,7 @@ class BouncingBall:
         offset = int(div)
         braille_x = 0 if mod < 0.5 else 1
         braille_y = round(self.pos_y)
-        braille_char = tup_to_braille_offset[(braille_x, braille_y)]
+        braille_char = coords_braille_mapping[(braille_x, braille_y)]
         return offset, braille_char
 
 
@@ -243,14 +243,14 @@ class Canvas:
     def set_cell(self, x: int, y: int) -> "Canvas":
         cell_x, char_x = divmod(x, self.BRAILLE_COLS)
         cell_y, char_y = divmod(y, self.BRAILLE_ROWS)
-        char = tup_to_braille_offset[(char_x, char_y)]
+        char = coords_braille_mapping[(char_x, char_y)]
         self._canvas |= char << self.to_char_xy(cell_x, cell_y) * 8
         return self
 
     def clear_cell(self, x: int, y: int) -> "Canvas":
         cell_x, char_x = divmod(x, self.BRAILLE_COLS)
         cell_y, char_y = divmod(y, self.BRAILLE_ROWS)
-        char = tup_to_braille_offset[(char_x, char_y)]
+        char = coords_braille_mapping[(char_x, char_y)]
         self._canvas &= ~(char << self.to_char_xy(cell_x, cell_y) * 8)
         return self
 
@@ -263,7 +263,7 @@ class Canvas:
                 chr(self._canvas >> 8 * i & 0xFF | BRAILLE_RANGE_START)
                 for i in range(self.width * y, self.width * (y + 1))
             )
-            for y in range(self.height - 1, -1, -1)
+            for y in range(self. - 1, -1, -1)
         )
         return "\n".join(lines)
 
@@ -272,7 +272,7 @@ class Canvas:
         for x, y in Point(*start).bresenham(Point(*end)):
             cell_x, char_x = divmod(x, self.BRAILLE_COLS)
             cell_y, char_y = divmod(y, self.BRAILLE_ROWS)
-            char = tup_to_braille_offset[(char_x, char_y)]
+            char = coords_braille_mapping[(char_x, char_y)]
             char_xy = cell_y * self.width + cell_x
             reduced |= char << char_xy * 8
         return Canvas(self.width, self.height, reduced)
@@ -300,7 +300,7 @@ class Canvas:
             ):
                 cell_x, char_x = divmod(cx, self.BRAILLE_COLS)
                 cell_y, char_y = divmod(cy, self.BRAILLE_ROWS)
-                char = tup_to_braille_offset[(char_x, char_y)]
+                char = coords_braille_mapping[(char_x, char_y)]
                 char_xy = cell_y * self.width + cell_x
                 reduced |= char << char_xy * 8
 
@@ -328,7 +328,7 @@ class Canvas:
         for x, y in rectangle_points:
             cell_x, char_x = divmod(x, self.BRAILLE_COLS)
             cell_y, char_y = divmod(y, self.BRAILLE_ROWS)
-            char = tup_to_braille_offset[(char_x, char_y)]
+            char = coords_braille_mapping[(char_x, char_y)]
             char_xy = cell_y * self.width + cell_x
             reduced |= char << char_xy * 8
 
@@ -378,32 +378,32 @@ c.set_cell(5, 2)
 c.set_cell(5, 1)
 c.set_cell(5, 0)
 
-print("\n\n")
-print(c.get_str())
-
-base = 200
-half = base // 2
-quarter = base // 4
-eighth = base // 8
-one_less_eighth = base - eighth
-base_minus_one = base - 1
-c2 = (
-    Canvas.with_dots_size(base, base)
-    .draw_line((0, 0), (base_minus_one, base_minus_one))
-    .draw_circle((half, half), quarter)
-    .draw_rectangle((eighth, eighth), (one_less_eighth, one_less_eighth))
-)
-
-c3 = ~c2
-print(c3.get_str())
-
-
-print("\n\n")
-print(c2.get_str())
-
-n = base
-t = 0.001
-cc2 = c2.copy()
+# print("\n\n")
+# print(c.get_str())
+#
+# base = 200
+# half = base // 2
+# quarter = base // 4
+# eighth = base // 8
+# one_less_eighth = base - eighth
+# base_minus_one = base - 1
+# c2 = (
+#     Canvas.with_dots_size(base, base)
+#     .draw_line((0, 0), (base_minus_one, base_minus_one))
+#     .draw_circle((half, half), quarter)
+#     .draw_rectangle((eighth, eighth), (one_less_eighth, one_less_eighth))
+# )
+#
+# c3 = ~c2
+# print(c3.get_str())
+#
+#
+# print("\n\n")
+# print(c2.get_str())
+#
+# n = base
+# t = 0.001
+# cc2 = c2.copy()
 
 
 def woop():
@@ -455,43 +455,142 @@ def woop():
 
 
 def sparkline(
-    data: Sequence[float],
-    width: int = 60,
+    data: typing.Iterable[float],
+    width: int | None = None,
+    filled: bool = True,
     min_val: int | None = None,
     max_val: int | None = None,
 ) -> str:
-    """Return a sparkline of the given data, with the given width."""
+    """Return a sparkline of the numerical data.
+
+    Args:
+        data: The data to be represented as a sparkline.
+        width: The width of the sparkline. If None, the width will be the length of the data.
+        filled: Whether the sparkline should be filled.
+        min_val: The bottom of the sparkline, or `None` to use the minimum value in the data.
+        max_val: The top of the sparkline, or `None` to use the maximum value in the data.
+
+    Returns:
+        The sparkline as a string.
+
+    Examples:
+        >>> sparkline([1, 2, 3, 4, 5, 2, 3, 4, 3, 2, 1])
+        '⣠⣶⣧⣶⣦'
+
+        >>> sparkline([1, 2, 3, 4, 5, 2, 3, 4, 3, 2, 1], filled=False, width=20)
+        '         ⡠⠒⠡⠒⠢⣀⠔⠊⠔⠒⢄'
+    """
     if not data:
-        return " " * width
+        return "⠀" * width if width is not None else ""
+    # if not isinstance(data, Sequence):
+    # We'll need to iterate over the data multiple times and with indexing, so
+    # we'll convert it to a list if it's not already a sequence.
+    data = list(data)
+
+    if width is not None:
+        if width < 1:
+            raise ValueError("width must be at least 1")
+        if len(data) // 2 > width:
+            data = data[-width * 2 :]
 
     _min_val = min(data) if min_val is None else min_val
     _max_val = max(data) if max_val is None else max_val
     scale = _max_val - _min_val
     if scale == 0:
         scale = 1
-    # todo - something here should be doubled due to double resolution for braille
-    chars = []
-    for left, right in zip(data[::2], data[1::2]):
-        val_left = math.floor((left - _min_val) / scale * 3)
-        val_right = math.floor((right - _min_val) / scale * 3)
 
-        ch = tup_to_braille_offset[(0, val_left)] | tup_to_braille_offset[(1, val_right)]
-        chars.append(chr(BRAILLE_RANGE_START | ch))
-    if len(data) % 2:
-        val = math.floor((data[-1] - _min_val) / scale * 3)
-        chars.append(chr(BRAILLE_RANGE_START | tup_to_braille_offset[(0, val)]))
-    if len(chars) > width:
-        chars = chars[:width]
-    elif len(chars) < width:
-        chars = [" " * (width - len(chars))] + chars
-    return "".join(chars)
+    cols = []
+    for value in reversed(data):
+        val = round((value - _min_val) / scale * 3)
+        val = max(0, min(3, val))  # Clamp to [0, 3]
+        cols.append(val)
+
+    mapping = coords_braille_mapping_filled if filled else coords_braille_mapping
+
+    # Here, we'll use the mapping to convert the columns of braille dots into
+    # braille characters. We zip them with a 1-element offset so that we can
+    # get the one character that represents the two columns.
+    # With fillvalue=-1, the last column will not be present, in case the data
+    # is an odd length.
+    chars = [
+        BRAILLE_RANGE_START | mapping[0, right] | mapping[1, left]
+        for left, right in itertools.zip_longest(cols[::2], cols[1::2], fillvalue=-1)
+    ]
+
+    # Pad or crop the sparkline to the desired width.
+    if width is not None and len(chars) < width:
+        chars.extend([BRAILLE_RANGE_START] * (width - len(chars)))
+
+    return "".join(chr(c) for c in chars[::-1])
 
 
-d = deque(maxlen=160)
-i = 0
-while True:
-    i += 0.2
-    d.append(math.sin(i))
-    s = "\r" + " " * 80 + "\r" + sparkline(d)
-    print(s, end="\r", flush=True)
-    time.sleep(0.01)
+def t_sparklines():
+
+    # Test sparklines
+    assert sparkline([1]) == "⢀"
+
+    assert sparkline([1, 1, 5, 5]) == "⣀⣿"
+    assert sparkline([1, 1, 1, 5, 5]) == "⢀⣀⣿"
+
+    # Test sparkline with input data of length greater than 1
+    assert sparkline([1, 2, 3, 4, 5, 2, 3, 4, 3, 2, 1]) == "⢀⣴⣾⣴⣶⣄"
+
+    # Test sparkline with filled=False
+    assert sparkline([1, 2, 3, 4, 5, 2, 3, 4, 3, 2, 1], filled=False) == "⢀⠔⠊⠔⠒⢄"
+
+    # Test sparkline with min_val set to a non-None value
+    assert sparkline([1, 2, 3, 4, 5, 2, 3, -4, -3, 2, 1], min_val=2) == "⢀⣠⣾⣠⣀⣀"
+
+    # Test sparkline with max_val set to a non-None value
+    assert sparkline([1, 2, 3, 4, 5, 2, 3, 4, 3, 2, 1], max_val=3) == "⢀⣾⣿⣾⣿⣆"
+
+    # Test sparkline with width set to a non-None value and an odd length
+    assert sparkline([1, 1, 1, 5, 5], width=10) == "⠀⠀⠀⠀⠀⠀⠀⢀⣀⣿"
+
+    # Test sparkline with width set to a non-None value and an even length
+    assert sparkline([1, 1, 5, 5], width=10) == "⠀⠀⠀⠀⠀⠀⠀⠀⣀⣿"
+
+    # Test sparkline with width set to a non-None value and a larger length
+    large_seq = [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5] * 4
+    assert sparkline(large_seq, width=10) == "⣶⣿⣇⣀⣤⣴⣶⣶⣾⣿"
+
+    # Test sparkline with all optional parameters set to non-None values
+    assert (
+        sparkline(
+            [1, 2, 3, 4, 5, 2, 3, -4, -3, 2, 1],
+            filled=False,
+            width=20,
+            min_val=0,
+            max_val=6,
+        )
+        == "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠔⠒⠔⣀⢄"
+    )
+
+
+print(sparkline([1, 1, 5, 5]))  # "⣀⣿"
+print(sparkline([1, 1, 1, 5, 5]))  # "⢀⣀⣿"
+print(sparkline([1, 2, 3, 4, 5, 2, 3, 4, 3, 2, 1]))  # ⢀⣴⣾⣴⣶⣄
+print(sparkline([1, 2, 3, 4, 5, 2, 3, 4, 3, 2, 1], filled=False))  # ⢀⠔⠊⠔⠒⢄
+print(sparkline([1, 2, 3, 4, 5, 2, 3, -4, -3, 2, 1], min_val=2))  # ⢀⠔⠊⠔⠒⢄
+print(sparkline([1, 2, 3, 4, 5, 2, 3, 4, 3, 2, 1], max_val=3))  # ⢀⠔⠊⠔⠒⢄
+print(sparkline([1, 1, 5, 5], width=10))  # ⢀⠔⠊⠔⠒⢄
+print(sparkline([1, 1, 1, 5, 5], width=10))  # ⢀⠔⠊⠔⠒⢄
+print(
+    sparkline([1, 2, 3, 4, 5, 2, 3, -4, -3, 2, 1], filled=False, width=20, min_val=0, max_val=6)
+)  # ⢀⠔⠊⠔⠒⢄
+large_seq = [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5] * 4
+print(sparkline(large_seq, width=10))
+
+t_sparklines()
+# exit()
+
+print(sparkline([1, 2, 3, 4, 4, 3, 2, 1]))
+
+# d = deque(maxlen=160)
+# i = 0
+# while True:
+#     i += 0.2
+#     d.append(math.sin(i))
+#     s = "\r" + " " * 80 + "\r" + sparkline(d)
+#     print(s, end="\r", flush=True)
+#     time.sleep(0.01)

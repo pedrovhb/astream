@@ -8,6 +8,7 @@ authors = ["Pedro Batista <pedrovhb@gmail.com>"]
 python = "^3.10"
 typing-extensions = "^4.4.0"
 loguru = "^0.6.0"
+mypy = {url = "https://github.com/mypyc/mypy_mypyc-wheels/releases/download/v1.0.0%2Bdev.b0003aff931c12298fb462aa4cece18610ee4d05/mypy-1.0.0+dev.b0003aff931c12298fb462aa4cece18610ee4d05-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"}
 
 [tool.poetry.dev-dependencies]
 black = "^22.10.0"
@@ -34,7 +35,6 @@ zstandard = "^0.19.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest-asyncio = "^0.20.3"
-mypy = {path = "mypy-1.0.0+dev.695ea3017fee084c9d2ec17d9b28f8af905e3b63-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"}
 coverage = "^6.5.0"
 
 [tool.mypy]
