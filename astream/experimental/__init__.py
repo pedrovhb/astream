@@ -1,410 +1,337 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from asyncio import Future
-from functools import cached_property
-from types import TracebackType
+import inspect
+from functools import partial
 from typing import (
     TypeVar,
-    Any,
     Generic,
-    overload,
     Callable,
-    TYPE_CHECKING,
-    AsyncGenerator,
+    Iterable,
+    Coroutine,
+    Any,
+    overload,
     AsyncIterable,
     AsyncIterator,
-    Awaitable,
-    Type,
-    Generator,
     cast,
+    TYPE_CHECKING,
+    TypeAlias,
 )
 
-from abc import ABC, abstractmethod
-from typing import TypeVar, Any
-
-from loguru import logger
-
-from astream.closeable_queue import CloseableQueue
-
-T = TypeVar("T")
-# logger.add(print, level="DEBUG")
-logger.debug("hello")
+_T = TypeVar("_T", covariant=True)
+_U = TypeVar("_U", covariant=True)
+_I = TypeVar("_I", contravariant=True)
+_O = TypeVar("_O", covariant=True)
 
 
-class BaseOperatorExtensible(Generic[T]):
-    def __init__(self) -> None:
-        pass
+if TYPE_CHECKING:
+    from typing import *
+
+    SomeIterable: TypeAlias = Union[
+        "Stream[Iterable[_T]]",
+        "Stream[AsyncIterable[_T]]",
+        "Stream[Iterator[_T]]",
+        "Stream[AsyncIterator[_T]]",
+        "Stream['Stream[_T]']",
+        "Stream[list[_T]]",
+        "Stream[Sequence[_T]]",
+        "Stream[set[_T]]",
+        "Stream[frozenset[_T]]",
+        "Stream[tuple[_T, ...]]",
+        "Stream[tuple[_T]]",
+        "Stream[tuple[_T, _T]]",
+        "Stream[tuple[_T, _T, _T]]",
+        "Stream[tuple[_T, _T, _T, _T]]",
+        "Stream[tuple[_T, _T, _T, _T, _T]]",
+        "Stream[AsyncGenerator[_T, None]]",
+        "Stream[Generator[_T, None, None]]",
+        "Stream[Sequence[_T]]",
+        "Stream[MutableSequence[_T]]",
+        "Stream[Collection[_T]]",
+        "Stream[Reversible[_T]]",
+        "Stream[ValuesView[_T]]",
+        "Stream[AbstractSet[_T]]",
+        "Stream[MutableSet[_T]]",
+        "Stream[KeysView[_T]]",
+        "Stream[ValuesView[_T]]",
+        "Stream[Deque[_T]]",
+    ]
+    FlattenSignatureT: TypeAlias = Callable[["SomeIterable[_U]"], "Stream[_U]"]
+
+_IterableT = TypeVar("_IterableT", bound=Iterable[object], covariant=True)
+
+FlattenFnT: TypeAlias = Callable[["Stream[Iterable[_U]]"], "Stream[_U]"]
+
+
+async def flatten(ait: AsyncIterable[Iterable[_U]]) -> AsyncIterator[_U]:
+    async for x in ait:
+        for y in x:
+            yield y
+
+
+class Stream(Generic[_T], AsyncIterator[_T]):
+    def __init__(self, src_iter: AsyncIterable[_T]) -> None:
+        self._src = aiter(src_iter)
+
+    def flatten(self: Stream[Iterable[_U]]) -> Stream[_U]:
+        return Stream(flatten(self))
+
+    def __pos__(self: Stream[Iterable[_U]]) -> Stream[_U]:
+        return self.flatten()
 
     @overload
-    def __truediv__(self, other: StreamTransformer[T, R]) -> R:
+    def __truediv__(self, other: Transformer[_T, _O]) -> Stream[_O]:
         ...
 
     @overload
-    def __truediv__(self, other: Any) -> Any:
-        ...
-
-    def __truediv__(self, other: Any) -> Any:
-        if hasattr(other, "__on_truediv__"):
-            return other.__on_truediv__(self)
-        return self / other
-
-    @overload
-    def __rtruediv__(self, other: StreamTransformer[T, R]) -> R:
+    def __truediv__(self, other: Callable[[AsyncIterable[_T]], AsyncIterator[_O]]) -> Stream[_O]:
         ...
 
     @overload
-    def __rtruediv__(self, other: Any) -> Any:
-        ...
-
-    def __rtruediv__(self, other: Any) -> Any:
-        if hasattr(other, "__on_rtruediv__"):
-            return other.__on_rtruediv__(self)
-        return other / self
-
-    @overload
-    def __floordiv__(self, other: StreamTransformer[T, R]) -> R:
+    def __truediv__(self, other: Callable[[_T], Coroutine[Any, Any, _O]]) -> Stream[_O]:
         ...
 
     @overload
-    def __floordiv__(self, other: Any) -> Any:
+    def __truediv__(self, other: Callable[[_T], _O]) -> Stream[_O]:
         ...
 
-    def __floordiv__(self, other: Any) -> Any:
-        if hasattr(other, "__on_floordiv__"):
-            return other.__on_floordiv__(self)
-        return self // other
+    def __truediv__(
+        self,
+        other: Transformer[_T, _O]
+        | Callable[[AsyncIterable[_T]], AsyncIterator[_O]]
+        | Callable[[_T], Coroutine[Any, Any, _O]]
+        | Callable[[_T], _O],
+    ) -> Stream[_O]:
+        if isinstance(other, Transformer):
+            return other.transform(self)
+        elif inspect.isasyncgenfunction(other):
+            return Transformer(other).transform(self)
+        else:
+            transf = cast(Transformer[_T, _O], Transformer.map(other))
+            return transf.transform(self)
 
-    @overload
-    def __rfloordiv__(self, other: StreamTransformer[T, R]) -> R:
-        ...
-
-    @overload
-    def __rfloordiv__(self, other: Any) -> Any:
-        ...
-
-    def __rfloordiv__(self, other: Any) -> Any:
-        if hasattr(other, "__on_rfloordiv__"):
-            return other.__on_rfloordiv__(self)
-        return other // self
-
-    @overload
-    def __mod__(self, other: StreamTransformer[T, R]) -> R:
-        ...
-
-    @overload
-    def __mod__(self, other: Any) -> Any:
-        ...
-
-    def __mod__(self, other: Any) -> Any:
-        if hasattr(other, "__on_mod__"):
-            return other.__on_mod__(self)
-        return self % other
-
-    @overload
-    def __rmod__(self, other: StreamTransformer[T, R]) -> R:
-        ...
-
-    @overload
-    def __rmod__(self, other: Any) -> Any:
-        ...
-
-    def __rmod__(self, other: Any) -> Any:
-        if hasattr(other, "__on_rmod__"):
-            return other.__on_rmod__(self)
-        return other % self
+    async def __anext__(self) -> _T:
+        while True:
+            try:
+                return await self._src.__anext__()
+            except StopAsyncIteration:
+                raise
 
 
-R = TypeVar("R")
-
-
-class StreamTransformer(ABC, Generic[T, R]):
-    @abstractmethod
-    def __on_truediv__(self, other: T) -> Stream[R]:
-        pass
-
-    @abstractmethod
-    def __on_rtruediv__(self, other: T) -> Stream[R]:
-        pass
-
-
-class StreamMapper(Generic[T, R], StreamTransformer[T, R]):
-    def __init__(self, fn: Callable[[T], R]):
-        def _fn(x: T | Stream[T]) -> Stream[R]:
-            if isinstance(x, Stream):
-                return Stream(fn(x._value))
-            return Stream(fn(x))
-
-        self._fn = fn
-
-    def __on_truediv__(self, other: Stream[T]) -> R:
-        return self._fn(other)
-
-    def __on_rtruediv__(self, other: Stream[T]) -> R:
-        return self._fn(other)
-
-
-YieldType = TypeVar("YieldType", covariant=True)
-SendType = TypeVar("SendType", contravariant=True)
-ResultType = TypeVar("ResultType")
-
-_BaseStreamT = TypeVar("_BaseStreamT", bound="_BaseStream[Any, Any]")
-
-
-class _BaseStream(
-    Generic[YieldType, SendType],
-    AsyncGenerator[YieldType, SendType],
-    ABC,
-):
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        logger.debug(f"[Stream.__init__()     ] - {self!r}")
-        super().__init__()
-
-        self._closed = asyncio.Event()
-        self._result: Future[YieldType] = asyncio.get_event_loop().create_future()
-        self._latest_value: YieldType | None = None
-
-        self._get_result_task: asyncio.Task[YieldType] = asyncio.create_task(self._get_result())
+class Transformer(Generic[_I, _O]):
+    def __init__(self, transformer: Callable[[AsyncIterable[_I]], AsyncIterable[_O]]) -> None:
+        self._transformer = transformer
 
     @classmethod
-    def _wrap_asend(
-        cls: Type[_BaseStreamT],
-    ) -> Callable[[_BaseStreamT, SendType], Awaitable[YieldType]]:
-        _cls = cast(Type[_BaseStream[YieldType, SendType]], cls)
-        original_asend = _cls.asend
+    @overload
+    def map(cls, f: Callable[[_I], Coroutine[Any, Any, _O]]) -> Transformer[_I, _O]:
+        ...
 
-        async def _asend(self: _BaseStream[YieldType, SendType], value: SendType) -> YieldType:
-            if self._closed.is_set():
-                raise StopAsyncIteration
-            result = await original_asend(self, value)
-            self._latest_value = result
-            return result
+    @classmethod
+    @overload
+    def map(cls, f: Callable[[_I], _O]) -> Transformer[_I, _O]:
+        ...
 
-        return _asend
+    @classmethod
+    def map(
+        cls, f: Callable[[_I], Coroutine[Any, Any, _O]] | Callable[[_I], _O]
+    ) -> Transformer[_I, _O]:
 
-    def _get_result(self) -> Generator[Any, None, Future[YieldType]]:
-        logger.warning(f"[Stream._get_result()  ] - _get_result started {self!r}")
-        task = asyncio.create_task(self._closed.wait())
-        yield from task.__await__()
+        if inspect.iscoroutinefunction(f):
+            _async_fn = cast(Callable[[_I], Coroutine[Any, Any, _O]], f)
 
-        if self._latest_value is not None:
-            logger.debug(f"[Stream._get_result()  ] - _closed done {self!r}")
-            self._result.set_result(self._latest_value)
-            return self._result
+            async def _map(
+                src_iter: AsyncIterable[_I],
+            ) -> AsyncIterable[_O]:
+                async for i in src_iter:
+                    yield await _async_fn(i)
+
         else:
-            logger.debug(f"[Stream._get_result()  ] - _closed done, but no values {self!r}")
-            self._result.set_exception(StopAsyncIteration)
-            return self._result
+            _sync_fn = cast(Callable[[_I], _O], f)
 
-    def __init_subclass__(cls: Type[_BaseStream[YieldType, SendType]], **kwargs: object) -> None:
-        logger.debug(f"[Stream.__init_subclass__()] - {cls}, {kwargs}")
-        cls.asend = cls._wrap_asend()  # type: ignore
-        super().__init_subclass__(**kwargs)
+            async def _map(
+                src_iter: AsyncIterable[_I],
+            ) -> AsyncIterable[_O]:
+                async for i in src_iter:
+                    yield _sync_fn(i)
+
+        return cls(_map)
+
+    @classmethod
+    @overload
+    def filter(cls, f: Callable[[_T], Coroutine[Any, Any, bool]]) -> Transformer[_T, _T]:
+        ...
+
+    @classmethod
+    @overload
+    def filter(cls, f: Callable[[_T], bool]) -> Transformer[_T, _T]:
+        ...
+
+    @classmethod
+    def filter(
+        cls, f: Callable[[_T], Coroutine[Any, Any, bool]] | Callable[[_T], bool]
+    ) -> Transformer[_T, _T]:
+
+        if inspect.iscoroutinefunction(f):
+            _async_fn = cast(Callable[[_I], Coroutine[Any, Any, bool]], f)
+
+            async def _filter(
+                src_iter: AsyncIterable[_I],
+            ) -> AsyncIterable[_O]:
+                async for i in src_iter:
+                    if await _async_fn(i):
+                        yield cast(_O, i)
+
+        else:
+            _sync_fn = cast(Callable[[_I], bool], f)
+
+            async def _filter(
+                src_iter: AsyncIterable[_I],
+            ) -> AsyncIterable[_O]:
+                async for i in src_iter:
+                    if _sync_fn(i):
+                        yield cast(_O, i)
+
+        return cast(Transformer[_T, _T], cls(_filter))
+
+    def transform(self, stream: AsyncIterable[_I]) -> Stream[_O]:
+        return Stream(self._transformer(aiter(stream)))
+
+    def compose_with(self, second: Transformer[_O, _T]) -> Transformer[_I, _T]:
+        return Transformer(partial(second._transformer, self._transformer))
 
     @overload
-    def athrow(
-        self,
-        __typ: Type[BaseException],
-        __val: BaseException | object = ...,
-        __tb: TracebackType | None = ...,
-    ) -> Awaitable[YieldType]:
+    def __truediv__(self, other: Transformer[_O, _T]) -> Transformer[_I, _T]:
         ...
 
     @overload
-    def athrow(
-        self, __typ: BaseException, __val: None = ..., __tb: TracebackType | None = ...
-    ) -> Awaitable[YieldType]:
+    def __truediv__(
+        self, other: Callable[[AsyncIterable[_O]], AsyncIterator[_T]]
+    ) -> Transformer[_I, _T]:
         ...
 
-    def athrow(
+    @overload
+    def __truediv__(self, other: Callable[[_O], Coroutine[Any, Any, _T]]) -> Transformer[_I, _T]:
+        ...
+
+    @overload
+    def __truediv__(self, other: Callable[[_O], _T]) -> Transformer[_I, _T]:
+        ...
+
+    def __truediv__(
         self,
-        __typ: Type[BaseException] | BaseException,
-        __val: BaseException | object | None = None,
-        __tb: TracebackType | None = None,
-    ) -> Awaitable[YieldType]:
-        logger.exception(
-            f"[Stream.athrow()      ] - {__typ=!r}, {__val=!r}, {__tb=!r}, {self=!r}",
-            exc_info=__val,
-        )
-        self._closed.set()
-        if isinstance(__typ, BaseException):
-            return super(_BaseStream, self).athrow(__typ)
-        else:
-            return super(_BaseStream, self).athrow(__typ, __val, __tb)
+        other: Transformer[_O, _T]
+        | Callable[[AsyncIterable[_O]], AsyncIterator[_T]]
+        | Callable[[_O], Coroutine[Any, Any, _T]]
+        | Callable[[_O], _T],
+    ) -> Transformer[_I, _T]:
+        if isinstance(other, Transformer):
+            return self.compose_with(other)
 
-    async def aclose(self) -> None:
-        logger.debug(f"[Stream.aclose()      ] - {self!r}")
-        return await super().aclose()
+        if inspect.isasyncgenfunction(other):
+            _other_async_gen = cast(Callable[[AsyncIterable[_O]], AsyncIterator[_T]], other)
+            return self.compose_with(Transformer(_other_async_gen))
 
-    @abstractmethod
-    def asend(self, __val: SendType) -> Awaitable[YieldType]:
+        if inspect.iscoroutinefunction(other):
+            _other_async_fn = cast(Callable[[_O], Coroutine[Any, Any, _T]], other)
+            return self.compose_with(Transformer.map(_other_async_fn))
+
+        if callable(other):
+            _other_fn = cast(Callable[[_O], _T], other)
+            return self.compose_with(Transformer.map(_other_fn))
+
+    @overload
+    def __rtruediv__(self, other: AsyncIterable[_I]) -> Stream[_O]:
         ...
 
-    # async def _anext_template(self, to_send: SendType) -> YieldType:
-    #     logger.debug(f"[Stream._anext_template()] - {self!r}")
-    #
-    #     if self._closed.is_set():
-    #         logger.debug(f"[Stream._anext_template()] - _closed is set {self!r}")
-    #         raise StopAsyncIteration
-    #
-    #     task_closed = asyncio.create_task(self._closed.wait())
-    #     task_asend = asyncio.ensure_future(self.asend(to_send))
-    #     done, pending = await asyncio.wait(
-    #         {task_closed, task_asend},
-    #         return_when=asyncio.FIRST_COMPLETED,
-    #     )
-    #     if task_asend in done:
-    #         return await task_asend
-    #     else:
-    #         logger.debug(f"[Stream._anext_template()] - _closed done {self!r}")
-    #         raise StopAsyncIteration
+    @overload
+    def __rtruediv__(
+        self, other: Callable[[AsyncIterable[_T]], AsyncIterator[_O]]
+    ) -> Transformer[_T, _O]:
+        ...
 
-    async def wait_get_last(self) -> YieldType:
-        """Don't consume the stream, just await for it to be done. Return the last value."""
-        return await self._result
+    @overload
+    def __rtruediv__(self, other: Callable[[_T], Coroutine[Any, Any, _I]]) -> Transformer[_T, _O]:
+        ...
 
-    async def consume_get_last(self) -> YieldType:
-        """Consume the stream and return the last value."""
-        async for _ in self:
-            pass
-        return await self._result
+    @overload
+    def __rtruediv__(self, other: Callable[[_T], _I]) -> Transformer[_T, _O]:
+        ...
 
-    async def close_get_last(self) -> YieldType:
-        """Close the stream and return the last value yielded."""
-        await self.aclose()
-        return await self._result
+    def __rtruediv__(
+        self,
+        other: AsyncIterable[_I]
+        | Callable[[AsyncIterable[_T]], AsyncIterator[_O]]
+        | Callable[[_T], Coroutine[Any, Any, _I]]
+        | Callable[[_T], _I],
+    ) -> Stream[_O] | Transformer[_T, _O]:
 
-    def __await__(self) -> Generator[Any, None, YieldType]:
-        logger.debug(f"[Stream.__await__()   ] - {self!r}")
+        if isinstance(other, AsyncIterable):
+            return self.transform(other)
 
-        yield from self.consume_get_last().__await__()
-        return self._result.result()
+        if inspect.isasyncgenfunction(other):
+            _other_async_gen_fn = cast(Callable[[AsyncIterable[_T]], AsyncIterator[_I]], other)
+            return Transformer(_other_async_gen_fn).compose_with(self)
 
-    async def __anext__(self) -> YieldType:
-        logger.debug(f"[Stream.__anext__()   ] - {self!r}")
-        return await self.asend(None)  # todo: this is a hack
+        if inspect.iscoroutinefunction(other):
+            _other_async_fn = cast(Callable[[_T], Coroutine[Any, Any, _I]], other)
+            return Transformer.map(_other_async_fn).compose_with(self)
 
-    def __aiter__(self) -> _BaseStream[YieldType, SendType]:
-        logger.debug(f"[Stream.__aiter__()   ] - {self!r}")
-        return self
-
-    def __repr__(self) -> str:
-        return f"<Stream {self.__class__.__name__}>"
-
-
-class AsyncIterableStream(_BaseStream[T, None]):
-    def __init__(self, async_iterable: AsyncIterable[T]) -> None:
-        super().__init__()
-        self._agen = self._get_agen(aiter(async_iterable))
-
-    async def _process(self, __value: SendType) -> T:
-        logger.debug(f"Stream._process({__value})")
-        return await self._agen.asend(None)
-
-    async def _get_agen(self, async_iterator: AsyncIterator[T]) -> AsyncGenerator[T, None]:
-        async for value in async_iterator:
-            yield value
-
-    async def asend(self, value: None) -> T:
-        try:
-            return await self._process(value)
-        except StopAsyncIteration:
-            self._closed.set()
-            raise
-
-
-class FilteringStream(_BaseStream[T, None]):
-    def __init__(self, async_iterable: AsyncIterable[T], filter_fn: Callable[[T], bool]) -> None:
-        super().__init__()
-        self._agen = self._get_agen(aiter(async_iterable))
-        self._filter_fn = filter_fn
-
-    async def _process(self, __value: None) -> T:
-        item = await self._agen.asend(None)
-        while not self._filter_fn(item):
-            item = await self._agen.asend(None)
-        return item
-
-    async def _get_agen(self, async_iterator: AsyncIterator[T]) -> AsyncGenerator[T, None]:
-        async for value in async_iterator:
-            yield value
-
-    async def asend(self, value: None) -> T:
-        try:
-            return await self._process(value)
-        except StopAsyncIteration:
-            self._closed.set()
-            raise
-
-
-if not TYPE_CHECKING:
-
-    def reveal_type(obj: Any) -> None:
-        print(type(obj))
+        if callable(other):
+            _other_fn = cast(Callable[[_T], _I], other)
+            return Transformer.map(_other_fn).compose_with(self)
 
 
 if __name__ == "__main__":
 
-    async def test_await_modes() -> None:
-        for fn in (
-            _BaseStream.consume_get_last,
-            _BaseStream.close_get_last,
-            _BaseStream.wait_get_last,
-        ):
-            print(fn.__name__)
+    if not TYPE_CHECKING:
 
-            strem = AsyncIterableStream(myarange(1, 10))
-            async for i in strem:
-                print(i)
-                if i == 5:
-                    break
+        def reveal_type(x: Any) -> None:
+            print(f"{x} has type {type(x)}")
 
-            print(fn, await fn(strem))
+    async def _main() -> None:
+        async def arange(n: int) -> AsyncIterator[int]:
+            for i in range(n):
+                yield i
+                await asyncio.sleep(0.1)
 
-    async def test_await() -> None:
-        strem = AsyncIterableStream(myarange(1, 10))
-        async for i in strem:
+        async def mul_2(x: int) -> int:
+            return x * 2
+
+        async def mul_3(x: int) -> int:
+            return x * 3
+
+        async def ar(x: int) -> tuple[int, ...]:
+            return tuple(range(x))
+
+        async def takes_float(x: float) -> int:
+            return int(x / 2)
+
+        async def returns_float(x: int) -> float:
+            return float(x / 2)
+
+        async def pairwise(iterable: AsyncIterable[_U]) -> AsyncIterator[tuple[_U, _U]]:
+            iterator = aiter(iterable)
+            try:
+                prev, nxt = await anext(iterator), await anext(iterator)
+            except StopAsyncIteration:
+                return
+            yield prev, nxt
+            async for nxt in iterator:
+                yield prev, nxt
+                prev = nxt
+
+        stream = Stream(arange(10)) / mul_2 / takes_float
+        reveal_type(stream)
+
+        stream2 = Stream(arange(10)) / mul_2 / returns_float
+        reveal_type(stream2)
+
+        stream3 = Stream(arange(10)) / mul_3 / ar
+        reveal_type(stream3)
+
+        async for i in +stream3 / pairwise:
             print(i)
-            if i == 5:
-                break
+            reveal_type(i)
 
-        print(await strem)
-
-    async def test_afilter() -> None:
-        strem = FilteringStream(myarange(1, 10), lambda x: x % 2 == 0)
-        async for i in strem:
-            print(i)
-
-        print(await strem)
-
-    def mul_two(x: int) -> int:
-        return x * 2
-
-    def to_str(x: int) -> str:
-        return str(x)
-
-    async def myarange(start: int, stop: int) -> AsyncIterable[int]:
-        for i in range(start, stop):
-            yield i
-
-    # Set loguru level to DEBUG
-    # logger.remove()
-
-    async def main() -> None:
-
-        # ar = myarange(10, 20)
-        # async for i in ar:
-        #     print("1", i)
-        #
-        # async for i in ar:
-        #     print("2", i)
-
-        await test_await()
-        await test_afilter()
-        await asyncio.sleep(0.3)
-
-    asyncio.run(main(), debug=True)
-    # result = stream / StreamMapper(mul_two)
-    # reveal_type(result)
-    # print(result)
+    asyncio.run(_main())

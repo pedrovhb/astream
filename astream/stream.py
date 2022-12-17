@@ -8,7 +8,7 @@ from typing import *
 from astream.pure import aflatten
 from astream.sentinel import _NoValueT, Sentinel
 from astream.utils import ensure_async_iterator, ensure_coroutine_function
-from closeable_queue import CloseableQueue
+from astream.closeable_queue import CloseableQueue
 
 # from worker_q import WorkerQueue
 

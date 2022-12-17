@@ -656,6 +656,21 @@ async def drop(async_iterator: AsyncIterator[_T], n: int) -> AsyncIterator[_T]:
 
 
 @transformer
+async def drop_while(
+    async_iterator: AsyncIterator[_T],
+    predicate: Callable[[_T], Coroutine[Any, Any, bool]] | Callable[[_T], bool],
+) -> AsyncIterator[_T]:
+    _predicate = cast(
+        Callable[[_T], Coroutine[Any, Any, bool]], ensure_coroutine_function(predicate)
+    )
+    async for item in async_iterator:
+        if not await _predicate(item):
+            break
+    async for item in async_iterator:
+        yield item
+
+
+@transformer
 async def immediately_unique(
     async_iterator: AsyncIterator[_T], key: Callable[[_T], Any] = lambda x: x
 ) -> AsyncIterator[_T]:
