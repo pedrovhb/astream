@@ -97,23 +97,27 @@ async def iter_to_aiter(iterable: Iterable[_T], /, target_dt: float = 0.0005) ->
             return
 
 
+_T_co = TypeVar("_T_co", covariant=True)
+_T_contra = TypeVar("_T_contra", contravariant=True)
+
+
 @overload
 def ensure_coroutine_function(
-    fn: Callable[_P, _CoroT[_T]], to_thread: bool = ...
-) -> Callable[_P, _CoroT[_T]]:
+    fn: Callable[_P, _CoroT[_T_co]], to_thread: bool = ...
+) -> Callable[_P, _CoroT[_T_co]]:
     ...
 
 
 @overload
 def ensure_coroutine_function(
-    fn: Callable[_P, _T], to_thread: bool = ...
-) -> Callable[_P, _CoroT[_T]]:
+    fn: Callable[_P, _T_co], to_thread: bool = ...
+) -> Callable[_P, _CoroT[_T_co]]:
     ...
 
 
 def ensure_coroutine_function(
-    fn: Callable[_P, _T] | Callable[_P, _CoroT[_T]], to_thread: bool = False
-) -> Callable[_P, _CoroT[_T]]:
+    fn: Callable[_P, _T_co] | Callable[_P, _CoroT[_T_co]], to_thread: bool = False
+) -> Callable[_P, _CoroT[_T_co]]:
     """Given a sync or async function, return an async function.
 
     Args:
@@ -127,17 +131,17 @@ def ensure_coroutine_function(
     if asyncio.iscoroutinefunction(fn):
         return fn
 
-    _fn_sync = cast(Callable[_P, _T], fn)
+    _fn_sync = cast(Callable[_P, _T_co], fn)
     if to_thread:
 
         @functools.wraps(_fn_sync)
-        async def _async_fn(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+        async def _async_fn(*args: _P.args, **kwargs: _P.kwargs) -> _T_co:
             return await asyncio.to_thread(_fn_sync, *args, **kwargs)
 
     else:
 
         @functools.wraps(_fn_sync)
-        async def _async_fn(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+        async def _async_fn(*args: _P.args, **kwargs: _P.kwargs) -> _T_co:
             return _fn_sync(*args, **kwargs)
 
     return _async_fn

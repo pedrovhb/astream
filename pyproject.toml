@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "astream"
-version = "0.7.2"
+version = "0.7.3"
 description = ""
 authors = ["Pedro Batista <pedrovhb@gmail.com>"]
 
@@ -8,7 +8,8 @@ authors = ["Pedro Batista <pedrovhb@gmail.com>"]
 python = "^3.10"
 typing-extensions = "^4.4.0"
 loguru = "^0.6.0"
-mypy = {url = "https://github.com/mypyc/mypy_mypyc-wheels/releases/download/v1.0.0%2Bdev.b0003aff931c12298fb462aa4cece18610ee4d05/mypy-1.0.0+dev.b0003aff931c12298fb462aa4cece18610ee4d05-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"}
+pyright = "^1.1.285"
+pyre-check = "^0.9.17"
 
 [tool.poetry.dev-dependencies]
 black = "^22.10.0"
@@ -25,18 +26,19 @@ rich = "^12.6.0"
 
 
 
-#[tool.poetry.group.zstd.dependencies]
-#zstandard = "^0.19.0"
-#
-#
-#
-#[tool.poetry.group.all.dependencies]
-#zstandard = "^0.19.0"
-#
-#
-#[tool.poetry.group.dev.dependencies]
-#pytest-asyncio = "^0.20.3"
-#coverage = "^6.5.0"
+[tool.poetry.group.zstd.dependencies]
+zstandard = "^0.19.0"
+
+
+[tool.poetry.group.all.dependencies]
+zstandard = "^0.19.0"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest-asyncio = "^0.20.3"
+coverage = "^6.5.0"
+mypy = "^0.991"
+black = {extras = ["d"], version = "^22.12.0"}
 
 [tool.mypy]
 python_version = "3.10"
@@ -91,7 +93,7 @@ dependencies = [
     "phantom-types>=1.1.0",
 ]
 name = "astream"
-version = "0.7.2"
+version = "0.7.3"
 description = ""
 
 [project.urls]
