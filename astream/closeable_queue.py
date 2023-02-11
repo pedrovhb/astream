@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from asyncio import Future, LifoQueue, PriorityQueue, Queue, QueueEmpty, Task
-import asyncio
-from typing import *
-
-from astream.event_like import Fuse
+from asyncio import LifoQueue, PriorityQueue, Queue, QueueEmpty, Task
+from typing import cast, TypeVar, AsyncIterable, AsyncGenerator, AsyncIterator
 
 _T = TypeVar("_T")
 
@@ -13,6 +10,39 @@ async def empty_gen() -> AsyncGenerator[_T, None]:
     # noinspection PyUnreachableCode
     if False:
         yield  # type: ignore
+
+
+async def feed_queue(
+    queue: Queue[_T],
+    iterable: AsyncIterable[_T],
+    close_when_done: bool = False,
+) -> None:
+    """Feed an async queue from an async iterable.
+
+    This coroutine will feed the queue with items from the iterable until the
+    iterable is exhausted. If `close_when_done` is True, the queue will be
+    closed when the iterable is exhausted.
+
+    Args:
+        queue: The queue to feed.
+        iterable: The iterable to feed the queue from.
+        close_when_done: If True and the queue is CloseableQueue or one of its subclasses, the
+            queue will be closed when the iterable is exhausted.
+
+    Raises:
+        QueueClosed: If the queue is closed before the iterable is exhausted.
+        ValueError: If the queue is not a CloseableQueue or one of its subclasses and
+            `close_when_done` is True.
+    """
+    if close_when_done and not isinstance(queue, CloseableQueue):
+        raise ValueError("close_when_done requires a CloseableQueue or one of its subclasses")
+
+    async for item in iterable:
+        await queue.put(item)
+
+    if close_when_done:
+        _queue = cast(CloseableQueue[_T], queue)
+        _queue.close()
 
 
 class QueueClosed(Exception):
@@ -206,46 +236,6 @@ class CloseableLifoQueue(CloseableQueue[_T], LifoQueue[_T]):
     pass
 
 
-async def feed_queue(
-    queue: Queue[_T],
-    iterable: AsyncIterable[_T],
-    close_when_done: bool = False,
-) -> None:
-    """Feed an async queue from an async iterable.
-
-    This coroutine will feed the queue with items from the iterable until the
-    iterable is exhausted. If `close_when_done` is True, the queue will be
-    closed when the iterable is exhausted.
-
-    Args:
-        queue: The queue to feed.
-        iterable: The iterable to feed the queue from.
-        close_when_done: If True and the queue is CloseableQueue or one of its subclasses, the
-            queue will be closed when the iterable is exhausted.
-
-    Raises:
-        QueueClosed: If the queue is closed before the iterable is exhausted.
-        ValueError: If the queue is not a CloseableQueue or one of its subclasses and
-            `close_when_done` is True.
-    """
-    if close_when_done and not isinstance(queue, CloseableQueue):
-        raise ValueError("close_when_done requires a CloseableQueue or one of its subclasses")
-
-    async for item in iterable:
-        await queue.put(item)
-
-    if close_when_done:
-        _queue = cast(CloseableQueue[_T], queue)
-        _queue.close()
-
-
-_R = TypeVar("_R")
-
-
-class Oven(Generic[_T, _R], CloseableQueue[_T]):
-    """An async closeable queue that returns a future upon putting"""
-
-
 if __name__ == "__main__":
     import asyncio
 
@@ -264,24 +254,6 @@ if __name__ == "__main__":
             asyncio.create_task(feed_queue(q, q2)),
         ]
         await asyncio.gather(*ts)
-
-        #
-        # async def print_queue():
-        #     async for item in q:
-        #         # break
-        #         print(item)
-        #
-        # async def add_to_queue():
-        #     for i in range(10):
-        #         await asyncio.sleep(0.1)
-        #         await q.put(i)
-        #     print("done adding")
-        #     q.close()
-        #
-        # await asyncio.gather(print_queue(), add_to_queue())
-        # await q.wait_finished()
-        # print("done")
-        # q.get_nowait()
 
     asyncio.run(main(), debug=True)
 
